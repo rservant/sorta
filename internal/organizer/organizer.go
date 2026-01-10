@@ -45,11 +45,14 @@ func (e *MoveError) Unwrap() error {
 type MoveResult struct {
 	SourcePath      string
 	DestinationPath string
+	IsDuplicate     bool   // True if the file was renamed due to a duplicate
+	OriginalName    string // Original filename before duplicate renaming (empty if not a duplicate)
 }
 
 // Organize moves a file to its appropriate destination based on classification.
 // For CLASSIFIED files: moves to <targetDir>/<year> <prefix>/<normalisedFilename>
-// For UNCLASSIFIED files: moves to ForReviewDirectory with original filename
+// For UNCLASSIFIED files: moves to for-review subdirectory within the source directory
+// If a file with the same name exists at the destination, it will be renamed with a duplicate suffix.
 func Organize(file scanner.FileEntry, classification *classifier.Classification, cfg *config.Configuration) (*MoveResult, error) {
 	var destDir string
 	var destFilename string
@@ -63,8 +66,8 @@ func Organize(file scanner.FileEntry, classification *classifier.Classification,
 		destDir = filepath.Join(classification.TargetDirectory, subfolder)
 		destFilename = classification.NormalisedFilename
 	} else {
-		// Move to ForReviewDirectory with original filename
-		destDir = cfg.ForReviewDirectory
+		// Move to for-review subdirectory within the source directory
+		destDir = GetForReviewPath(filepath.Dir(file.FullPath))
 		destFilename = file.Name
 	}
 
@@ -80,16 +83,6 @@ func Organize(file scanner.FileEntry, classification *classifier.Classification,
 		return nil, err
 	}
 
-	destPath := filepath.Join(destDir, destFilename)
-
-	// Check if destination already exists
-	if _, err := os.Stat(destPath); err == nil {
-		return nil, &MoveError{
-			Type: DestinationExists,
-			Path: destPath,
-		}
-	}
-
 	// Check if source exists
 	if _, err := os.Stat(file.FullPath); os.IsNotExist(err) {
 		return nil, &MoveError{
@@ -98,6 +91,16 @@ func Organize(file scanner.FileEntry, classification *classifier.Classification,
 			Err:  err,
 		}
 	}
+
+	// Handle duplicate files - generate unique name if destination exists
+	originalFilename := destFilename
+	isDuplicate := false
+	if FileExists(filepath.Join(destDir, destFilename)) {
+		destFilename = GenerateDuplicateName(destDir, destFilename)
+		isDuplicate = true
+	}
+
+	destPath := filepath.Join(destDir, destFilename)
 
 	// Move the file (rename)
 	if err := os.Rename(file.FullPath, destPath); err != nil {
@@ -114,10 +117,16 @@ func Organize(file scanner.FileEntry, classification *classifier.Classification,
 		}
 	}
 
-	return &MoveResult{
+	result := &MoveResult{
 		SourcePath:      file.FullPath,
 		DestinationPath: destPath,
-	}, nil
+		IsDuplicate:     isDuplicate,
+	}
+	if isDuplicate {
+		result.OriginalName = originalFilename
+	}
+
+	return result, nil
 }
 
 // extractPrefixFromNormalisedFilename extracts the prefix portion from a normalised filename.
@@ -187,4 +196,11 @@ func copyAndDelete(src, dst string) error {
 	}
 
 	return nil
+}
+
+// GetForReviewPath returns the for-review subdirectory for a source directory.
+// The for-review directory is created within each source directory to hold
+// unclassified files, keeping them close to their source location.
+func GetForReviewPath(sourceDir string) string {
+	return filepath.Join(sourceDir, "for-review")
 }

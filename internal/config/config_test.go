@@ -10,8 +10,8 @@ import (
 	"github.com/leanovate/gopter/prop"
 )
 
-// Feature: sorta-file-organizer, Property 1: Configuration Round-Trip
-// Validates: Requirements 8.3
+// Feature: config-auto-discover, Property 11: Configuration Round-Trip
+// Validates: Requirements 11.2
 
 // genNonEmptyString generates non-empty strings for configuration fields.
 func genNonEmptyString() gopter.Gen {
@@ -42,12 +42,10 @@ func genConfiguration() gopter.Gen {
 		gen.SliceOfN(3, genPrefixRule()).SuchThat(func(rules []PrefixRule) bool {
 			return len(rules) > 0
 		}),
-		genNonEmptyString(),
 	).Map(func(vals []interface{}) *Configuration {
 		return &Configuration{
-			SourceDirectories:  vals[0].([]string),
-			PrefixRules:        vals[1].([]PrefixRule),
-			ForReviewDirectory: vals[2].(string),
+			SourceDirectories: vals[0].([]string),
+			PrefixRules:       vals[1].([]PrefixRule),
 		}
 	})
 }
@@ -70,10 +68,10 @@ func TestConfigurationRoundTrip(t *testing.T) {
 				return false
 			}
 
-			// Load it back
-			loaded, err := Load(tmpFile)
+			// Load it back using LoadOrCreate (doesn't validate)
+			loaded, err := LoadOrCreate(tmpFile)
 			if err != nil {
-				t.Logf("Load failed: %v", err)
+				t.Logf("LoadOrCreate failed: %v", err)
 				return false
 			}
 
@@ -81,6 +79,80 @@ func TestConfigurationRoundTrip(t *testing.T) {
 			return reflect.DeepEqual(config, loaded)
 		},
 		genConfiguration(),
+	))
+
+	properties.TestingRun(t)
+}
+
+// Feature: config-auto-discover, Property 3: Source Directory Duplicate Prevention
+// Validates: Requirements 3.4
+func TestSourceDirectoryDuplicatePrevention(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+
+	properties := gopter.NewProperties(parameters)
+
+	properties.Property("AddSourceDirectory does not add duplicate directories", prop.ForAll(
+		func(existingDirs []string, newDir string) bool {
+			// Create a configuration with existing directories
+			config := &Configuration{
+				SourceDirectories: existingDirs,
+				PrefixRules:       []PrefixRule{},
+			}
+
+			// Check if the directory already exists
+			alreadyExists := config.HasSourceDirectory(newDir)
+			originalLen := len(config.SourceDirectories)
+
+			// Try to add the directory
+			added := config.AddSourceDirectory(newDir)
+
+			if alreadyExists {
+				// If it already existed, it should not be added
+				return !added && len(config.SourceDirectories) == originalLen
+			}
+			// If it didn't exist, it should be added
+			return added && len(config.SourceDirectories) == originalLen+1 && config.HasSourceDirectory(newDir)
+		},
+		gen.SliceOf(genNonEmptyString()),
+		genNonEmptyString(),
+	))
+
+	properties.TestingRun(t)
+}
+
+// Feature: config-auto-discover, Property 7: Prefix Rule Duplicate Prevention
+// Validates: Requirements 7.3, 7.4, 7.5
+func TestPrefixRuleDuplicatePrevention(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+
+	properties := gopter.NewProperties(parameters)
+
+	properties.Property("AddPrefixRule does not add duplicate prefixes (case-insensitive)", prop.ForAll(
+		func(existingRules []PrefixRule, newRule PrefixRule) bool {
+			// Create a configuration with existing rules
+			config := &Configuration{
+				SourceDirectories: []string{},
+				PrefixRules:       existingRules,
+			}
+
+			// Check if the prefix already exists (case-insensitive)
+			alreadyExists := config.HasPrefix(newRule.Prefix)
+			originalLen := len(config.PrefixRules)
+
+			// Try to add the rule
+			added := config.AddPrefixRule(newRule)
+
+			if alreadyExists {
+				// If it already existed, it should not be added and existing rules unchanged
+				return !added && len(config.PrefixRules) == originalLen
+			}
+			// If it didn't exist, it should be added
+			return added && len(config.PrefixRules) == originalLen+1 && config.HasPrefix(newRule.Prefix)
+		},
+		gen.SliceOf(genPrefixRule()),
+		genPrefixRule(),
 	))
 
 	properties.TestingRun(t)

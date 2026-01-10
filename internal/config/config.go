@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // ConfigErrorType represents the type of configuration error.
@@ -45,11 +46,9 @@ type PrefixRule struct {
 
 // Configuration holds all settings for Sorta.
 type Configuration struct {
-	SourceDirectories  []string     `json:"sourceDirectories"`
-	PrefixRules        []PrefixRule `json:"prefixRules"`
-	ForReviewDirectory string       `json:"forReviewDirectory"`
+	SourceDirectories []string     `json:"sourceDirectories"`
+	PrefixRules       []PrefixRule `json:"prefixRules"`
 }
-
 
 // Validate checks that the configuration has all required fields.
 func (c *Configuration) Validate() error {
@@ -82,14 +81,48 @@ func (c *Configuration) Validate() error {
 		}
 	}
 
-	if c.ForReviewDirectory == "" {
-		return &ConfigError{
-			Type:    ValidationError,
-			Message: "forReviewDirectory cannot be empty",
+	return nil
+}
+
+// HasPrefix checks if a prefix already exists in the configuration (case-insensitive).
+func (c *Configuration) HasPrefix(prefix string) bool {
+	lowerPrefix := strings.ToLower(prefix)
+	for _, rule := range c.PrefixRules {
+		if strings.ToLower(rule.Prefix) == lowerPrefix {
+			return true
 		}
 	}
+	return false
+}
 
-	return nil
+// AddPrefixRule adds a rule if the prefix doesn't already exist (case-insensitive).
+// Returns true if the rule was added, false if it was a duplicate.
+func (c *Configuration) AddPrefixRule(rule PrefixRule) bool {
+	if c.HasPrefix(rule.Prefix) {
+		return false
+	}
+	c.PrefixRules = append(c.PrefixRules, rule)
+	return true
+}
+
+// HasSourceDirectory checks if a directory already exists in sourceDirectories.
+func (c *Configuration) HasSourceDirectory(dir string) bool {
+	for _, d := range c.SourceDirectories {
+		if d == dir {
+			return true
+		}
+	}
+	return false
+}
+
+// AddSourceDirectory adds a directory if it doesn't already exist.
+// Returns true if the directory was added, false if it was a duplicate.
+func (c *Configuration) AddSourceDirectory(dir string) bool {
+	if c.HasSourceDirectory(dir) {
+		return false
+	}
+	c.SourceDirectories = append(c.SourceDirectories, dir)
+	return true
 }
 
 // Load reads and parses a configuration file from the given path.
@@ -119,6 +152,35 @@ func Load(filePath string) (*Configuration, error) {
 
 	if err := config.Validate(); err != nil {
 		return nil, err
+	}
+
+	return &config, nil
+}
+
+// LoadOrCreate loads config if it exists, or returns an empty config if the file doesn't exist.
+func LoadOrCreate(filePath string) (*Configuration, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Return empty configuration if file doesn't exist
+			return &Configuration{
+				SourceDirectories: []string{},
+				PrefixRules:       []PrefixRule{},
+			}, nil
+		}
+		return nil, &ConfigError{
+			Type:    FileNotFound,
+			Path:    filePath,
+			Message: err.Error(),
+		}
+	}
+
+	var config Configuration
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, &ConfigError{
+			Type:    InvalidJSON,
+			Message: err.Error(),
+		}
 	}
 
 	return &config, nil

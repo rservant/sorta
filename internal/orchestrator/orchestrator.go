@@ -16,15 +16,18 @@ type Result struct {
 	DestinationPath string
 	Success         bool
 	Error           error
+	IsDuplicate     bool   // True if the file was renamed due to a duplicate
+	OriginalName    string // Original filename before duplicate renaming (empty if not a duplicate)
 }
 
 // Summary represents the overall results of a Sorta run.
 type Summary struct {
-	TotalFiles   int
-	SuccessCount int
-	ErrorCount   int
-	Results      []Result
-	ScanErrors   []error
+	TotalFiles     int
+	SuccessCount   int
+	ErrorCount     int
+	DuplicateCount int // Number of files moved as duplicates
+	Results        []Result
+	ScanErrors     []error
 }
 
 // Run executes the Sorta file organization workflow.
@@ -62,6 +65,9 @@ func Run(configPath string) (*Summary, error) {
 		summary.Results = append(summary.Results, result)
 		if result.Success {
 			summary.SuccessCount++
+			if result.IsDuplicate {
+				summary.DuplicateCount++
+			}
 		} else {
 			summary.ErrorCount++
 		}
@@ -89,6 +95,8 @@ func processFile(file scanner.FileEntry, cfg *config.Configuration) Result {
 		SourcePath:      moveResult.SourcePath,
 		DestinationPath: moveResult.DestinationPath,
 		Success:         true,
+		IsDuplicate:     moveResult.IsDuplicate,
+		OriginalName:    moveResult.OriginalName,
 	}
 }
 
@@ -99,6 +107,10 @@ func (s *Summary) HasErrors() bool {
 
 // PrintSummary returns a formatted summary string.
 func (s *Summary) PrintSummary() string {
+	if s.DuplicateCount > 0 {
+		return fmt.Sprintf("Processed %d files: %d successful (%d duplicates), %d errors",
+			s.TotalFiles, s.SuccessCount, s.DuplicateCount, s.ErrorCount)
+	}
 	return fmt.Sprintf("Processed %d files: %d successful, %d errors",
 		s.TotalFiles, s.SuccessCount, s.ErrorCount)
 }
