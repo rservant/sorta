@@ -99,6 +99,43 @@ Scans a directory to automatically detect prefix rules from existing file organi
 
 Running `./sorta discover /Documents` will detect and add rules for "Invoice" and "Receipt" prefixes.
 
+### Audit Trail Commands
+
+Sorta maintains a complete audit trail of all file operations, enabling review and undo of any run.
+
+```bash
+# List all runs with summary statistics
+./sorta audit list
+
+# Show detailed events for a specific run
+./sorta audit show <run-id>
+
+# Filter events by type (MOVE, SKIP, ERROR, etc.)
+./sorta audit show <run-id> --type MOVE
+
+# Export a run's audit data to a file
+./sorta audit export <run-id> --output audit-export.json
+```
+
+### Undo Operations
+
+Undo any previous run to restore files to their original locations:
+
+```bash
+# Undo the most recent run
+./sorta undo
+
+# Undo a specific run by ID
+./sorta undo <run-id>
+
+# Preview what would be undone without making changes
+./sorta undo --preview
+./sorta undo <run-id> --preview
+
+# Cross-machine undo with path mapping
+./sorta undo --path-mapping "/old/path:/new/path"
+```
+
 ## Configuration
 
 Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`--config`.
@@ -113,7 +150,14 @@ Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`-
     { "prefix": "Invoice", "targetDirectory": "/Users/me/Documents/Invoices" },
     { "prefix": "Receipt", "targetDirectory": "/Users/me/Documents/Receipts" },
     { "prefix": "Statement", "targetDirectory": "/Users/me/Documents/Statements" }
-  ]
+  ],
+  "audit": {
+    "logDirectory": ".sorta/audit",
+    "rotationSizeBytes": 10485760,
+    "rotationPeriod": "daily",
+    "retentionDays": 30,
+    "minRetentionDays": 7
+  }
 }
 ```
 
@@ -123,6 +167,11 @@ Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`-
 |-------|-------------|
 | `sourceDirectories` | Directories to scan for files |
 | `prefixRules` | List of prefix-to-target mappings |
+| `audit.logDirectory` | Directory for audit log files (default: `.sorta/audit`) |
+| `audit.rotationSizeBytes` | Rotate log when it exceeds this size (default: 10MB) |
+| `audit.rotationPeriod` | Time-based rotation: `daily`, `weekly`, or empty (default: `daily`) |
+| `audit.retentionDays` | Delete logs older than this (0 = unlimited, default: 30) |
+| `audit.minRetentionDays` | Never delete logs younger than this (default: 7) |
 
 Note: The `forReviewDirectory` field is no longer used. Unclassified files are placed in a `for-review` subdirectory within each source directory.
 
@@ -166,6 +215,42 @@ When a file would overwrite an existing file at the destination, Sorta renames i
 - First duplicate: `filename_duplicate.pdf`
 - Second duplicate: `filename_duplicate_2.pdf`
 - And so on...
+
+## Audit Trail
+
+Sorta maintains a complete audit trail of all file operations in JSON Lines format. Every run is assigned a unique ID, and every file operation is logged with:
+
+- Timestamp (ISO 8601)
+- Source and destination paths
+- File identity (SHA-256 hash, size, modification time)
+- Operation status and reason codes
+
+### Audit Log Location
+
+By default, audit logs are stored in `.sorta/audit/` relative to the config file location. The active log is `sorta-audit.jsonl`, with rotated segments named `sorta-audit-YYYYMMDD-HHMMSS.jsonl`.
+
+### Undo Safety
+
+The undo system includes several safety features:
+
+- **Identity verification**: Files are verified by content hash before undo
+- **Collision detection**: Won't overwrite files that exist at the undo destination
+- **Partial undo**: Continues with remaining files if individual operations fail
+- **Idempotency**: Running undo twice produces the same result
+- **Cross-machine support**: Use path mappings to undo on a different machine
+
+### Event Types
+
+| Event | Description |
+|-------|-------------|
+| `MOVE` | File moved to classified destination |
+| `ROUTE_TO_REVIEW` | File moved to for-review directory |
+| `SKIP` | File skipped (already processed, no match, etc.) |
+| `DUPLICATE_DETECTED` | File renamed due to destination conflict |
+| `PARSE_FAILURE` | Date parsing failed |
+| `ERROR` | Operation error occurred |
+| `UNDO_MOVE` | File restored during undo |
+| `UNDO_SKIP` | File skipped during undo |
 
 ## Running Tests
 

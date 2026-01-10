@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sorta/internal/audit"
 	"strings"
 )
 
@@ -46,8 +47,9 @@ type PrefixRule struct {
 
 // Configuration holds all settings for Sorta.
 type Configuration struct {
-	SourceDirectories []string     `json:"sourceDirectories"`
-	PrefixRules       []PrefixRule `json:"prefixRules"`
+	SourceDirectories []string           `json:"sourceDirectories"`
+	PrefixRules       []PrefixRule       `json:"prefixRules"`
+	Audit             *audit.AuditConfig `json:"audit,omitempty"`
 }
 
 // Validate checks that the configuration has all required fields.
@@ -82,6 +84,32 @@ func (c *Configuration) Validate() error {
 	}
 
 	return nil
+}
+
+// ApplyAuditDefaults ensures the Audit configuration has sensible defaults.
+// If Audit is nil, it creates a new AuditConfig with defaults.
+// If Audit exists but has zero values, it applies defaults for those fields.
+func (c *Configuration) ApplyAuditDefaults() {
+	defaults := audit.DefaultAuditConfig()
+
+	if c.Audit == nil {
+		c.Audit = &defaults
+		return
+	}
+
+	// Apply defaults for zero values
+	if c.Audit.LogDirectory == "" {
+		c.Audit.LogDirectory = defaults.LogDirectory
+	}
+	if c.Audit.RotationSize == 0 {
+		c.Audit.RotationSize = defaults.RotationSize
+	}
+	// RotationPeriod can be empty (no time-based rotation)
+	// RetentionDays 0 means unlimited, so we don't override
+	// RetentionRuns 0 means unlimited, so we don't override
+	if c.Audit.MinRetentionDays == 0 {
+		c.Audit.MinRetentionDays = defaults.MinRetentionDays
+	}
 }
 
 // HasPrefix checks if a prefix already exists in the configuration (case-insensitive).
@@ -154,6 +182,9 @@ func Load(filePath string) (*Configuration, error) {
 		return nil, err
 	}
 
+	// Apply audit defaults for missing or partial audit configuration
+	config.ApplyAuditDefaults()
+
 	return &config, nil
 }
 
@@ -162,10 +193,12 @@ func LoadOrCreate(filePath string) (*Configuration, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// Return empty configuration if file doesn't exist
+			// Return empty configuration with audit defaults if file doesn't exist
+			defaults := audit.DefaultAuditConfig()
 			return &Configuration{
 				SourceDirectories: []string{},
 				PrefixRules:       []PrefixRule{},
+				Audit:             &defaults,
 			}, nil
 		}
 		return nil, &ConfigError{
@@ -182,6 +215,9 @@ func LoadOrCreate(filePath string) (*Configuration, error) {
 			Message: err.Error(),
 		}
 	}
+
+	// Apply audit defaults for missing or partial audit configuration
+	config.ApplyAuditDefaults()
 
 	return &config, nil
 }
