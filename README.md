@@ -18,6 +18,35 @@ Files that don't match any prefix rule go to a `for-review` subdirectory within 
 
 ## Installation
 
+### Download Pre-built Binaries
+
+Download the latest release for your platform from the [Releases page](https://github.com/rservant/sorta/releases).
+
+**macOS:**
+```bash
+# Download the binary for your architecture (arm64 for Apple Silicon, amd64 for Intel)
+curl -LO https://github.com/rservant/sorta/releases/latest/download/sorta-darwin-arm64
+
+# Remove quarantine attribute (required for unsigned binaries)
+xattr -d com.apple.quarantine sorta-darwin-arm64
+
+# Make executable and move to PATH
+chmod +x sorta-darwin-arm64
+sudo mv sorta-darwin-arm64 /usr/local/bin/sorta
+```
+
+**Linux:**
+```bash
+curl -LO https://github.com/rservant/sorta/releases/latest/download/sorta-linux-amd64
+chmod +x sorta-linux-amd64
+sudo mv sorta-linux-amd64 /usr/local/bin/sorta
+```
+
+**Windows:**
+Download `sorta-windows-amd64.exe` from the releases page. You may see a SmartScreen warning on first run—click "More info" then "Run anyway".
+
+### Build from Source
+
 ```bash
 go build -o sorta ./cmd/sorta
 ```
