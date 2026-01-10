@@ -14,7 +14,7 @@ For example:
 - `Invoice 2024-03-15 Acme Corp.pdf` → moves to `Invoices/2024 Invoice/`
 - `receipt 2023-11-20 Amazon order.pdf` → moves to `Receipts/2023 Receipt/`
 
-Files that don't match any prefix rule go to a "For Review" directory.
+Files that don't match any prefix rule go to a `for-review` subdirectory within each source directory.
 
 ## Installation
 
@@ -24,13 +24,55 @@ go build -o sorta ./cmd/sorta
 
 ## Usage
 
+Sorta uses subcommands for different operations:
+
+### Run Organization
+
 ```bash
-./sorta <config-file>
+# Use default config (sorta-config.json)
+./sorta run
+
+# Use custom config file
+./sorta -c myconfig.json run
+./sorta --config myconfig.json run
 ```
+
+### View Configuration
+
+```bash
+./sorta config
+./sorta -c myconfig.json config
+```
+
+### Add Source Directory
+
+```bash
+./sorta add-source /path/to/directory
+```
+
+Creates the config file if it doesn't exist.
+
+### Auto-Discover Prefix Rules
+
+```bash
+./sorta discover /path/to/organized/files
+```
+
+Scans a directory to automatically detect prefix rules from existing file organization. For example, if you have:
+
+```
+/Documents/
+├── Invoices/
+│   └── Invoice 2024-01-15 Acme.pdf
+└── Receipts/
+    └── Receipt 2024-02-20 Amazon.pdf
+```
+
+Running `./sorta discover /Documents` will detect and add rules for "Invoice" and "Receipt" prefixes.
 
 ## Configuration
 
-Create a JSON configuration file:
+Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`--config`.
 
 ```json
 {
@@ -42,8 +84,7 @@ Create a JSON configuration file:
     { "prefix": "Invoice", "targetDirectory": "/Users/me/Documents/Invoices" },
     { "prefix": "Receipt", "targetDirectory": "/Users/me/Documents/Receipts" },
     { "prefix": "Statement", "targetDirectory": "/Users/me/Documents/Statements" }
-  ],
-  "forReviewDirectory": "/Users/me/Documents/For Review"
+  ]
 }
 ```
 
@@ -53,7 +94,8 @@ Create a JSON configuration file:
 |-------|-------------|
 | `sourceDirectories` | Directories to scan for files |
 | `prefixRules` | List of prefix-to-target mappings |
-| `forReviewDirectory` | Where unclassified files go |
+
+Note: The `forReviewDirectory` field is no longer used. Unclassified files are placed in a `for-review` subdirectory within each source directory.
 
 ## Matching Rules
 
@@ -77,13 +119,32 @@ Classified files are organized into year-prefix subfolders:
 
 The prefix in the filename is normalized to match the canonical casing from your config.
 
+### Unclassified Files
+
+Files that don't match any prefix rule are moved to a `for-review` subdirectory within their source directory:
+
+```
+/Users/me/Downloads/
+└── for-review/
+    ├── random-file.txt
+    └── document-without-date.pdf
+```
+
+### Duplicate Handling
+
+When a file would overwrite an existing file at the destination, Sorta renames it:
+
+- First duplicate: `filename_duplicate.pdf`
+- Second duplicate: `filename_duplicate_2.pdf`
+- And so on...
+
 ## Running Tests
 
 ```bash
 go test ./... -v
 ```
 
-All property-based tests run 100 iterations by default.
+All property-based tests run 100 iterations by default using the `gopter` library.
 
 ## License
 
