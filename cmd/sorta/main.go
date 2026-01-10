@@ -11,11 +11,17 @@ import (
 func main() {
 	// Parse command-line arguments
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: sorta <config-file>")
+		printUsage()
 		os.Exit(1)
 	}
 
 	configPath := os.Args[1]
+
+	// Handle help flag
+	if configPath == "-h" || configPath == "--help" || configPath == "-help" {
+		printUsage()
+		os.Exit(0)
+	}
 
 	// Run the orchestrator
 	summary, err := orchestrator.Run(configPath)
@@ -43,4 +49,30 @@ func main() {
 	if summary.HasErrors() {
 		os.Exit(1)
 	}
+}
+
+func printUsage() {
+	fmt.Println(`Sorta - File organization utility
+
+Usage: sorta <config-file>
+
+Sorta organizes files from source directories into structured folders
+based on filename prefixes and embedded ISO dates (YYYY-MM-DD).
+
+Example:
+  sorta config.json
+
+Config file format (JSON):
+  {
+    "sourceDirectories": ["/path/to/source"],
+    "prefixRules": [
+      { "prefix": "Invoice", "targetDirectory": "/path/to/invoices" }
+    ],
+    "forReviewDirectory": "/path/to/review"
+  }
+
+Files matching "<prefix> <YYYY-MM-DD> <description>" are moved to:
+  <targetDirectory>/<year> <prefix>/<normalized filename>
+
+Files not matching any rule go to the forReviewDirectory.`)
 }
