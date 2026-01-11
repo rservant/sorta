@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// ISODateDirPattern matches directory names starting with YYYY-MM-DD
+// The date portion validates:
+// - Month: 01-12
+// - Day: 01-31
+var ISODateDirPattern = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])`)
+
+// IsISODateDirectory returns true if the directory name starts with an ISO date (YYYY-MM-DD).
+// This is used to skip date-organized directories during discovery scanning.
+func IsISODateDirectory(dirName string) bool {
+	return ISODateDirPattern.MatchString(dirName)
+}
+
 // PrefixPattern represents the regex for detecting file patterns.
 // Pattern: ^([A-Za-z][A-Za-z0-9]*)\s+(\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))\s+(.+)$
 // This matches filenames like "Invoice 2024-01-15 Acme Corp.pdf"

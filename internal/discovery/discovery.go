@@ -74,6 +74,8 @@ func analyzeDirectory(dir string) ([]string, error) {
 // analyzeDirectoryWithCallback recursively scans all files within a directory
 // and returns unique prefixes found using pattern detection.
 // It calls the callback for each file analyzed and pattern found.
+// It skips subdirectories whose names start with an ISO date (YYYY-MM-DD).
+// Prefixes are extracted only from files, never from directory names.
 func analyzeDirectoryWithCallback(dir string, callback DiscoveryCallback, fileCounter *int) ([]string, error) {
 	prefixSet := make(map[string]bool)
 
@@ -84,6 +86,13 @@ func analyzeDirectoryWithCallback(dir string, callback DiscoveryCallback, fileCo
 		}
 
 		if info.IsDir() {
+			// Don't skip the root directory itself
+			if path != dir {
+				// Skip directories that start with an ISO date
+				if IsISODateDirectory(info.Name()) {
+					return filepath.SkipDir
+				}
+			}
 			return nil
 		}
 

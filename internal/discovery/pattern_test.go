@@ -253,3 +253,181 @@ func TestPrefixExtractionProperty(t *testing.T) {
 
 	properties.TestingRun(t)
 }
+
+// Feature: discovery-directory-filtering, Property 3: ISO Date Pattern Detection
+// Validates: Requirements 2.3
+
+// genValidISODateDirName generates directory names that start with a valid ISO date.
+func genValidISODateDirName() gopter.Gen {
+	return gopter.CombineGens(
+		gen.IntRange(1900, 2100), // year
+		gen.IntRange(1, 12),      // month
+		gen.IntRange(1, 28),      // day (use 28 to avoid month-specific issues)
+		gen.OneConstOf("", " Some Folder", " Documents", " Archive"),
+	).Map(func(vals []interface{}) string {
+		year := vals[0].(int)
+		month := vals[1].(int)
+		day := vals[2].(int)
+		suffix := vals[3].(string)
+		return fmt.Sprintf("%04d-%02d-%02d%s", year, month, day, suffix)
+	})
+}
+
+// genInvalidISODateDirName generates directory names that do NOT start with a valid ISO date.
+func genInvalidISODateDirName() gopter.Gen {
+	return gen.OneGenOf(
+		// Prefix before date
+		gen.AlphaString().SuchThat(func(s string) bool {
+			return len(s) > 0
+		}).Map(func(prefix string) string {
+			return prefix + " 2024-01-15"
+		}),
+		// Invalid month (13)
+		gen.Const("2024-13-01"),
+		// Invalid month (00)
+		gen.Const("2024-00-15"),
+		// Invalid day (32)
+		gen.Const("2024-01-32"),
+		// Invalid day (00)
+		gen.Const("2024-01-00"),
+		// No dashes
+		gen.Const("20240115"),
+		// Wrong separator
+		gen.Const("2024/01/15"),
+		// Plain text
+		gen.AlphaString().SuchThat(func(s string) bool {
+			return len(s) > 0
+		}),
+	)
+}
+
+func TestIsISODateDirectoryProperty(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+
+	properties := gopter.NewProperties(parameters)
+
+	// Property 3: ISO Date Pattern Detection
+	// For any directory name, IsISODateDirectory returns true if and only if
+	// the name starts with a valid ISO date pattern (YYYY-MM-DD where MM is 01-12 and DD is 01-31).
+
+	// Property: Valid ISO date directory names should return true
+	properties.Property("Valid ISO date directories are detected", prop.ForAll(
+		func(dirName string) bool {
+			return IsISODateDirectory(dirName)
+		},
+		genValidISODateDirName(),
+	))
+
+	// Property: Invalid ISO date directory names should return false
+	properties.Property("Invalid ISO date directories are not detected", prop.ForAll(
+		func(dirName string) bool {
+			return !IsISODateDirectory(dirName)
+		},
+		genInvalidISODateDirName(),
+	))
+
+	properties.TestingRun(t)
+}
+
+// TestIsISODateDirectory tests the IsISODateDirectory function with specific examples.
+// Validates: Requirements 2.3
+func TestIsISODateDirectory(t *testing.T) {
+	tests := []struct {
+		name     string
+		dirName  string
+		expected bool
+	}{
+		// Valid ISO dates - should return true
+		{
+			name:     "valid ISO date only",
+			dirName:  "2024-01-15",
+			expected: true,
+		},
+		{
+			name:     "valid ISO date with suffix",
+			dirName:  "2024-01-15 Some Folder",
+			expected: true,
+		},
+		{
+			name:     "valid ISO date with text suffix",
+			dirName:  "2024-12-31 Year End Documents",
+			expected: true,
+		},
+		{
+			name:     "valid ISO date first day of month",
+			dirName:  "2024-01-01",
+			expected: true,
+		},
+		{
+			name:     "valid ISO date last valid day",
+			dirName:  "2024-01-31",
+			expected: true,
+		},
+		// Invalid patterns - should return false
+		{
+			name:     "prefix before date",
+			dirName:  "Invoice 2024-01-15",
+			expected: false,
+		},
+		{
+			name:     "invalid month 13",
+			dirName:  "2024-13-01",
+			expected: false,
+		},
+		{
+			name:     "invalid month 00",
+			dirName:  "2024-00-15",
+			expected: false,
+		},
+		{
+			name:     "invalid day 32",
+			dirName:  "2024-01-32",
+			expected: false,
+		},
+		{
+			name:     "invalid day 00",
+			dirName:  "2024-01-00",
+			expected: false,
+		},
+		{
+			name:     "no dashes - compact format",
+			dirName:  "20240115",
+			expected: false,
+		},
+		{
+			name:     "wrong separator - slashes",
+			dirName:  "2024/01/15",
+			expected: false,
+		},
+		{
+			name:     "plain text directory",
+			dirName:  "Documents",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			dirName:  "",
+			expected: false,
+		},
+		{
+			name:     "partial date - year only",
+			dirName:  "2024",
+			expected: false,
+		},
+		{
+			name:     "partial date - year and month",
+			dirName:  "2024-01",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsISODateDirectory(tt.dirName)
+			if result != tt.expected {
+				t.Errorf("IsISODateDirectory(%q) = %v, want %v", tt.dirName, result, tt.expected)
+			}
+		})
+	}
+}

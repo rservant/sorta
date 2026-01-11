@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/leanovate/gopter"
@@ -352,4 +353,774 @@ func toggleCase(s string) string {
 		first = first - 'A' + 'a'
 	}
 	return string(first) + s[1:]
+}
+
+// Feature: discovery-directory-filtering, Property 2: ISO-Date Directory Filtering
+// Validates: Requirements 2.1, 2.2, 3.1, 3.2, 3.3
+
+func TestISODateDirectoryFiltering(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+
+	properties := gopter.NewProperties(parameters)
+
+	// Property 2: ISO-Date Directory Filtering
+	// For any directory structure containing subdirectories that start with ISO dates (YYYY-MM-DD),
+	// files within those ISO-date subdirectories SHALL NOT be analyzed for prefix extraction.
+	// Files in non-ISO-date subdirectories SHALL be analyzed normally.
+
+	// Property: Files in ISO-date subdirectories are NOT analyzed
+	properties.Property("Files in ISO-date subdirectories are skipped", prop.ForAll(
+		func(prefix string, date string, isoDateDir string) bool {
+			// Create temp directory structure
+			baseDir, err := os.MkdirTemp("", "sorta-isofilter-*")
+			if err != nil {
+				t.Logf("Failed to create base dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(baseDir)
+
+			// Create an ISO-date subdirectory
+			isoDir := filepath.Join(baseDir, isoDateDir)
+			if err := os.MkdirAll(isoDir, 0755); err != nil {
+				t.Logf("Failed to create ISO date dir: %v", err)
+				return false
+			}
+
+			// Create a file with matching pattern inside the ISO-date directory
+			filename := prefix + " " + date + " document.pdf"
+			filePath := filepath.Join(isoDir, filename)
+			if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+				t.Logf("Failed to create file: %v", err)
+				return false
+			}
+
+			// Analyze the base directory
+			prefixes, err := analyzeDirectory(baseDir)
+			if err != nil {
+				t.Logf("analyzeDirectory failed: %v", err)
+				return false
+			}
+
+			// The prefix should NOT be found because the file is in an ISO-date directory
+			for _, p := range prefixes {
+				if p == prefix {
+					t.Logf("Prefix %q was found but should have been skipped (in ISO-date dir %q)", prefix, isoDateDir)
+					return false
+				}
+			}
+
+			return true
+		},
+		genValidPrefixForTest(),
+		genValidISODateForTest(),
+		genValidISODateDirNameForTest(),
+	))
+
+	// Property: Files in non-ISO-date subdirectories ARE analyzed
+	properties.Property("Files in non-ISO-date subdirectories are analyzed", prop.ForAll(
+		func(prefix string, date string, nonIsoDir string) bool {
+			// Create temp directory structure
+			baseDir, err := os.MkdirTemp("", "sorta-nonisofilter-*")
+			if err != nil {
+				t.Logf("Failed to create base dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(baseDir)
+
+			// Create a non-ISO-date subdirectory
+			subDir := filepath.Join(baseDir, nonIsoDir)
+			if err := os.MkdirAll(subDir, 0755); err != nil {
+				t.Logf("Failed to create non-ISO date dir: %v", err)
+				return false
+			}
+
+			// Create a file with matching pattern inside the non-ISO-date directory
+			filename := prefix + " " + date + " document.pdf"
+			filePath := filepath.Join(subDir, filename)
+			if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+				t.Logf("Failed to create file: %v", err)
+				return false
+			}
+
+			// Analyze the base directory
+			prefixes, err := analyzeDirectory(baseDir)
+			if err != nil {
+				t.Logf("analyzeDirectory failed: %v", err)
+				return false
+			}
+
+			// The prefix SHOULD be found because the file is in a non-ISO-date directory
+			found := false
+			for _, p := range prefixes {
+				if p == prefix {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				t.Logf("Prefix %q was not found but should have been (in non-ISO-date dir %q)", prefix, nonIsoDir)
+				return false
+			}
+
+			return true
+		},
+		genValidPrefixForTest(),
+		genValidISODateForTest(),
+		genNonISODateDirNameForTest(),
+	))
+
+	// Property: Files in root of target directory are always analyzed
+	properties.Property("Files in root directory are always analyzed", prop.ForAll(
+		func(prefix string, date string) bool {
+			// Create temp directory structure
+			baseDir, err := os.MkdirTemp("", "sorta-rootfile-*")
+			if err != nil {
+				t.Logf("Failed to create base dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(baseDir)
+
+			// Create a file with matching pattern in the root directory
+			filename := prefix + " " + date + " document.pdf"
+			filePath := filepath.Join(baseDir, filename)
+			if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+				t.Logf("Failed to create file: %v", err)
+				return false
+			}
+
+			// Analyze the base directory
+			prefixes, err := analyzeDirectory(baseDir)
+			if err != nil {
+				t.Logf("analyzeDirectory failed: %v", err)
+				return false
+			}
+
+			// The prefix SHOULD be found because the file is in the root
+			found := false
+			for _, p := range prefixes {
+				if p == prefix {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				t.Logf("Prefix %q was not found in root directory", prefix)
+				return false
+			}
+
+			return true
+		},
+		genValidPrefixForTest(),
+		genValidISODateForTest(),
+	))
+
+	properties.TestingRun(t)
+}
+
+// genValidISODateDirNameForTest generates directory names that start with a valid ISO date.
+func genValidISODateDirNameForTest() gopter.Gen {
+	return gopter.CombineGens(
+		gen.IntRange(2000, 2030),
+		gen.IntRange(1, 12),
+		gen.IntRange(1, 28),
+		gen.OneConstOf("", " Documents", " Archive"),
+	).Map(func(vals []interface{}) string {
+		year := vals[0].(int)
+		month := vals[1].(int)
+		day := vals[2].(int)
+		suffix := vals[3].(string)
+		return fmt.Sprintf("%04d-%02d-%02d%s", year, month, day, suffix)
+	})
+}
+
+// genNonISODateDirNameForTest generates directory names that do NOT start with a valid ISO date.
+func genNonISODateDirNameForTest() gopter.Gen {
+	return gen.SliceOfN(8, gen.AlphaLowerChar()).Map(func(chars []rune) string {
+		return string(chars)
+	}).SuchThat(func(s string) bool {
+		// Ensure it doesn't accidentally match an ISO date pattern
+		return len(s) > 0 && !IsISODateDirectory(s)
+	})
+}
+
+// TestDirectoryFilteringBehavior tests specific examples of directory filtering.
+// Validates: Requirements 2.1, 2.2, 3.1, 3.2, 3.3
+func TestDirectoryFilteringBehavior(t *testing.T) {
+	t.Run("files in ISO-date subdirectories are skipped", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create an ISO-date subdirectory
+		isoDir := filepath.Join(baseDir, "2024-01-15 Documents")
+		if err := os.MkdirAll(isoDir, 0755); err != nil {
+			t.Fatalf("Failed to create ISO date dir: %v", err)
+		}
+
+		// Create a file with matching pattern inside the ISO-date directory
+		filePath := filepath.Join(isoDir, "Invoice 2024-01-15 Acme Corp.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// The prefix should NOT be found
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				t.Errorf("Prefix 'Invoice' was found but should have been skipped")
+			}
+		}
+	})
+
+	t.Run("files in non-ISO-date subdirectories are analyzed", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create a non-ISO-date subdirectory
+		subDir := filepath.Join(baseDir, "invoices")
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatalf("Failed to create subdir: %v", err)
+		}
+
+		// Create a file with matching pattern inside the subdirectory
+		filePath := filepath.Join(subDir, "Invoice 2024-01-15 Acme Corp.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// The prefix SHOULD be found
+		found := false
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Prefix 'Invoice' was not found but should have been")
+		}
+	})
+
+	t.Run("nested directory structures with mixed ISO and non-ISO dirs", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create structure:
+		// baseDir/
+		//   invoices/                    <- non-ISO, should be scanned
+		//     Invoice 2024-01-15 A.pdf   <- should be found
+		//     2024-02-01 Archive/        <- ISO, should be skipped
+		//       Invoice 2024-02-01 B.pdf <- should NOT be found
+
+		invoicesDir := filepath.Join(baseDir, "invoices")
+		if err := os.MkdirAll(invoicesDir, 0755); err != nil {
+			t.Fatalf("Failed to create invoices dir: %v", err)
+		}
+
+		// File in non-ISO directory (should be found)
+		filePath1 := filepath.Join(invoicesDir, "Invoice 2024-01-15 A.pdf")
+		if err := os.WriteFile(filePath1, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// ISO-date subdirectory inside invoices
+		archiveDir := filepath.Join(invoicesDir, "2024-02-01 Archive")
+		if err := os.MkdirAll(archiveDir, 0755); err != nil {
+			t.Fatalf("Failed to create archive dir: %v", err)
+		}
+
+		// File in ISO-date directory (should NOT be found)
+		filePath2 := filepath.Join(archiveDir, "Receipt 2024-02-01 B.pdf")
+		if err := os.WriteFile(filePath2, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// Invoice should be found (from non-ISO dir)
+		foundInvoice := false
+		foundReceipt := false
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				foundInvoice = true
+			}
+			if p == "Receipt" {
+				foundReceipt = true
+			}
+		}
+
+		if !foundInvoice {
+			t.Errorf("Prefix 'Invoice' was not found but should have been (in non-ISO dir)")
+		}
+		if foundReceipt {
+			t.Errorf("Prefix 'Receipt' was found but should have been skipped (in ISO-date dir)")
+		}
+	})
+
+	t.Run("deeply nested ISO-date directories are skipped", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create structure:
+		// baseDir/
+		//   level1/
+		//     level2/
+		//       2024-03-15 Deep Archive/  <- ISO, should be skipped
+		//         Statement 2024-03-15 X.pdf <- should NOT be found
+
+		deepDir := filepath.Join(baseDir, "level1", "level2", "2024-03-15 Deep Archive")
+		if err := os.MkdirAll(deepDir, 0755); err != nil {
+			t.Fatalf("Failed to create deep dir: %v", err)
+		}
+
+		filePath := filepath.Join(deepDir, "Statement 2024-03-15 X.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// Statement should NOT be found
+		for _, p := range prefixes {
+			if p == "Statement" {
+				t.Errorf("Prefix 'Statement' was found but should have been skipped (in nested ISO-date dir)")
+			}
+		}
+	})
+
+	t.Run("files in root of target candidate are analyzed", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create a file directly in the root
+		filePath := filepath.Join(baseDir, "Invoice 2024-01-15 Root File.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// Invoice should be found
+		found := false
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Prefix 'Invoice' was not found in root directory")
+		}
+	})
+}
+
+// Feature: discovery-directory-filtering, Property 1: File-Only Prefix Extraction
+// Validates: Requirements 1.1, 1.2, 1.3
+
+// TestFileOnlyPrefixExtraction tests that prefixes are extracted only from files, not directories.
+func TestFileOnlyPrefixExtraction(t *testing.T) {
+	t.Run("directory named with prefix pattern does NOT produce prefix", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-fileonly-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create a directory named with the prefix pattern (should NOT produce prefix)
+		dirPath := filepath.Join(baseDir, "Invoice 2024-01-15 Vendor")
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			t.Fatalf("Failed to create directory: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// "Invoice" prefix should NOT be found (directory names are ignored)
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				t.Errorf("Prefix 'Invoice' was extracted from directory name but should have been ignored")
+			}
+		}
+	})
+
+	t.Run("file named with prefix pattern DOES produce prefix", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-fileonly-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create a file named with the prefix pattern (should produce prefix)
+		filePath := filepath.Join(baseDir, "Invoice 2024-01-15 Vendor.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// "Invoice" prefix SHOULD be found (from file)
+		found := false
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Prefix 'Invoice' was not extracted from file but should have been")
+		}
+	})
+
+	t.Run("same pattern in directory and file - only file produces prefix", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-fileonly-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create a directory named with the prefix pattern
+		dirPath := filepath.Join(baseDir, "Receipt 2024-03-20 Store")
+		if err := os.MkdirAll(dirPath, 0755); err != nil {
+			t.Fatalf("Failed to create directory: %v", err)
+		}
+
+		// Create a file with a DIFFERENT prefix pattern
+		filePath := filepath.Join(baseDir, "Statement 2024-02-15 Bank.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// "Receipt" prefix should NOT be found (from directory)
+		// "Statement" prefix SHOULD be found (from file)
+		foundReceipt := false
+		foundStatement := false
+		for _, p := range prefixes {
+			if p == "Receipt" {
+				foundReceipt = true
+			}
+			if p == "Statement" {
+				foundStatement = true
+			}
+		}
+
+		if foundReceipt {
+			t.Errorf("Prefix 'Receipt' was extracted from directory name but should have been ignored")
+		}
+		if !foundStatement {
+			t.Errorf("Prefix 'Statement' was not extracted from file but should have been")
+		}
+	})
+
+	t.Run("nested directory with prefix pattern does NOT produce prefix", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-fileonly-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create nested directories with prefix patterns
+		nestedDir := filepath.Join(baseDir, "documents", "Invoice 2024-01-15 Vendor")
+		if err := os.MkdirAll(nestedDir, 0755); err != nil {
+			t.Fatalf("Failed to create nested directory: %v", err)
+		}
+
+		// Create a file with a different prefix in the nested directory
+		filePath := filepath.Join(nestedDir, "Receipt 2024-01-20 Shop.pdf")
+		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// "Invoice" prefix should NOT be found (from directory name)
+		// "Receipt" prefix SHOULD be found (from file)
+		foundInvoice := false
+		foundReceipt := false
+		for _, p := range prefixes {
+			if p == "Invoice" {
+				foundInvoice = true
+			}
+			if p == "Receipt" {
+				foundReceipt = true
+			}
+		}
+
+		if foundInvoice {
+			t.Errorf("Prefix 'Invoice' was extracted from nested directory name but should have been ignored")
+		}
+		if !foundReceipt {
+			t.Errorf("Prefix 'Receipt' was not extracted from file but should have been")
+		}
+	})
+
+	t.Run("multiple directories with prefix patterns produce no prefixes", func(t *testing.T) {
+		// Create temp directory structure
+		baseDir, err := os.MkdirTemp("", "sorta-fileonly-*")
+		if err != nil {
+			t.Fatalf("Failed to create base dir: %v", err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Create multiple directories with prefix patterns
+		dirs := []string{
+			"Invoice 2024-01-15 Vendor A",
+			"Receipt 2024-02-20 Store B",
+			"Statement 2024-03-25 Bank C",
+		}
+		for _, dir := range dirs {
+			dirPath := filepath.Join(baseDir, dir)
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
+				t.Fatalf("Failed to create directory %s: %v", dir, err)
+			}
+		}
+
+		// Analyze the base directory
+		prefixes, err := analyzeDirectory(baseDir)
+		if err != nil {
+			t.Fatalf("analyzeDirectory failed: %v", err)
+		}
+
+		// No prefixes should be found (all are from directories)
+		if len(prefixes) > 0 {
+			t.Errorf("Expected no prefixes, but found: %v", prefixes)
+		}
+	})
+}
+
+// Feature: discovery-directory-filtering, Property 1: File-Only Prefix Extraction
+// Validates: Requirements 1.1, 1.2, 1.3
+// Property: For any directory structure containing both files and directories that match the prefix pattern,
+// the discovery engine SHALL return prefixes extracted only from files.
+// Directory names matching the prefix pattern SHALL NOT appear in the discovered prefixes.
+
+func TestFileOnlyPrefixExtractionProperty(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+
+	properties := gopter.NewProperties(parameters)
+
+	// Property 1: File-Only Prefix Extraction
+	// Directories with prefix patterns do NOT produce prefixes
+	properties.Property("Directories with prefix patterns do not produce prefixes", prop.ForAll(
+		func(dirPrefix string, date string) bool {
+			// Create temp directory structure
+			baseDir, err := os.MkdirTemp("", "sorta-prop-fileonly-*")
+			if err != nil {
+				t.Logf("Failed to create base dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(baseDir)
+
+			// Create a directory named with the prefix pattern
+			dirName := dirPrefix + " " + date + " Vendor"
+			dirPath := filepath.Join(baseDir, dirName)
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
+				t.Logf("Failed to create directory: %v", err)
+				return false
+			}
+
+			// Analyze the base directory
+			prefixes, err := analyzeDirectory(baseDir)
+			if err != nil {
+				t.Logf("analyzeDirectory failed: %v", err)
+				return false
+			}
+
+			// The prefix should NOT be found (directory names are ignored)
+			for _, p := range prefixes {
+				if strings.EqualFold(p, dirPrefix) {
+					t.Logf("Prefix %q was extracted from directory name but should have been ignored", dirPrefix)
+					return false
+				}
+			}
+
+			return true
+		},
+		genValidPrefixForTest(),
+		genValidISODateForTest(),
+	))
+
+	// Property 1: File-Only Prefix Extraction
+	// Files with prefix patterns DO produce prefixes
+	properties.Property("Files with prefix patterns produce prefixes", prop.ForAll(
+		func(filePrefix string, date string) bool {
+			// Create temp directory structure
+			baseDir, err := os.MkdirTemp("", "sorta-prop-fileonly-*")
+			if err != nil {
+				t.Logf("Failed to create base dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(baseDir)
+
+			// Create a file named with the prefix pattern
+			fileName := filePrefix + " " + date + " Document.pdf"
+			filePath := filepath.Join(baseDir, fileName)
+			if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+				t.Logf("Failed to create file: %v", err)
+				return false
+			}
+
+			// Analyze the base directory
+			prefixes, err := analyzeDirectory(baseDir)
+			if err != nil {
+				t.Logf("analyzeDirectory failed: %v", err)
+				return false
+			}
+
+			// The prefix SHOULD be found (from file)
+			found := false
+			for _, p := range prefixes {
+				if strings.EqualFold(p, filePrefix) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				t.Logf("Prefix %q was not extracted from file but should have been", filePrefix)
+				return false
+			}
+
+			return true
+		},
+		genValidPrefixForTest(),
+		genValidISODateForTest(),
+	))
+
+	// Property 1: File-Only Prefix Extraction
+	// When both directory and file have prefix patterns, only file prefix is extracted
+	properties.Property("Only file prefixes are extracted when both directory and file have patterns", prop.ForAll(
+		func(dirPrefix string, filePrefix string, date string) bool {
+			// Skip if prefixes are the same (case-insensitive) - we want to test distinct prefixes
+			if strings.EqualFold(dirPrefix, filePrefix) {
+				return true
+			}
+
+			// Create temp directory structure
+			baseDir, err := os.MkdirTemp("", "sorta-prop-fileonly-*")
+			if err != nil {
+				t.Logf("Failed to create base dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(baseDir)
+
+			// Create a directory named with one prefix pattern
+			dirName := dirPrefix + " " + date + " Vendor"
+			dirPath := filepath.Join(baseDir, dirName)
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
+				t.Logf("Failed to create directory: %v", err)
+				return false
+			}
+
+			// Create a file named with a different prefix pattern
+			fileName := filePrefix + " " + date + " Document.pdf"
+			filePath := filepath.Join(baseDir, fileName)
+			if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+				t.Logf("Failed to create file: %v", err)
+				return false
+			}
+
+			// Analyze the base directory
+			prefixes, err := analyzeDirectory(baseDir)
+			if err != nil {
+				t.Logf("analyzeDirectory failed: %v", err)
+				return false
+			}
+
+			// Directory prefix should NOT be found
+			// File prefix SHOULD be found
+			foundDirPrefix := false
+			foundFilePrefix := false
+			for _, p := range prefixes {
+				if strings.EqualFold(p, dirPrefix) {
+					foundDirPrefix = true
+				}
+				if strings.EqualFold(p, filePrefix) {
+					foundFilePrefix = true
+				}
+			}
+
+			if foundDirPrefix {
+				t.Logf("Directory prefix %q was extracted but should have been ignored", dirPrefix)
+				return false
+			}
+			if !foundFilePrefix {
+				t.Logf("File prefix %q was not extracted but should have been", filePrefix)
+				return false
+			}
+
+			return true
+		},
+		genValidPrefixForTest(),
+		genValidPrefixForTest(),
+		genValidISODateForTest(),
+	))
+
+	properties.TestingRun(t)
 }
