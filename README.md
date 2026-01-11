@@ -105,6 +105,11 @@ Scans a directory to automatically detect prefix rules from existing file organi
 
 Running `./sorta discover /Documents` will detect and add rules for "Invoice" and "Receipt" prefixes.
 
+**Discovery Behavior:**
+- Prefixes are extracted only from filenames, not directory names
+- Subdirectories starting with ISO dates (e.g., `2024-01-15 Backup/`) are skipped during scanning
+- This prevents false positives from date-organized folder structures
+
 ### Audit Trail Commands
 
 Sorta maintains a complete audit trail of all file operations, enabling review and undo of any run.
