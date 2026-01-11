@@ -309,7 +309,7 @@ func TestDiscoverDuplicateFiltering(t *testing.T) {
 			// Create config with the prefix already present (different case)
 			existingConfig := &config.Configuration{
 				PrefixRules: []config.PrefixRule{
-					{Prefix: toggleCase(prefix), TargetDirectory: "/some/other/dir"},
+					{Prefix: toggleCase(prefix), OutboundDirectory: "/some/other/dir"},
 				},
 			}
 

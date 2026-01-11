@@ -39,25 +39,25 @@ func (e *ConfigError) Error() string {
 	}
 }
 
-// PrefixRule maps a filename prefix to a target directory.
+// PrefixRule maps a filename prefix to an outbound directory.
 type PrefixRule struct {
-	Prefix          string `json:"prefix"`
-	TargetDirectory string `json:"targetDirectory"`
+	Prefix            string `json:"prefix"`
+	OutboundDirectory string `json:"outboundDirectory"`
 }
 
 // Configuration holds all settings for Sorta.
 type Configuration struct {
-	SourceDirectories []string           `json:"sourceDirectories"`
-	PrefixRules       []PrefixRule       `json:"prefixRules"`
-	Audit             *audit.AuditConfig `json:"audit,omitempty"`
+	InboundDirectories []string           `json:"inboundDirectories"`
+	PrefixRules        []PrefixRule       `json:"prefixRules"`
+	Audit              *audit.AuditConfig `json:"audit,omitempty"`
 }
 
 // Validate checks that the configuration has all required fields.
 func (c *Configuration) Validate() error {
-	if len(c.SourceDirectories) == 0 {
+	if len(c.InboundDirectories) == 0 {
 		return &ConfigError{
 			Type:    ValidationError,
-			Message: "sourceDirectories must contain at least one directory",
+			Message: "inboundDirectories must contain at least one directory",
 		}
 	}
 
@@ -75,10 +75,10 @@ func (c *Configuration) Validate() error {
 				Message: fmt.Sprintf("prefixRules[%d].prefix cannot be empty", i),
 			}
 		}
-		if rule.TargetDirectory == "" {
+		if rule.OutboundDirectory == "" {
 			return &ConfigError{
 				Type:    ValidationError,
-				Message: fmt.Sprintf("prefixRules[%d].targetDirectory cannot be empty", i),
+				Message: fmt.Sprintf("prefixRules[%d].outboundDirectory cannot be empty", i),
 			}
 		}
 	}
@@ -133,9 +133,9 @@ func (c *Configuration) AddPrefixRule(rule PrefixRule) bool {
 	return true
 }
 
-// HasSourceDirectory checks if a directory already exists in sourceDirectories.
-func (c *Configuration) HasSourceDirectory(dir string) bool {
-	for _, d := range c.SourceDirectories {
+// HasInboundDirectory checks if a directory already exists in inboundDirectories.
+func (c *Configuration) HasInboundDirectory(dir string) bool {
+	for _, d := range c.InboundDirectories {
 		if d == dir {
 			return true
 		}
@@ -143,13 +143,13 @@ func (c *Configuration) HasSourceDirectory(dir string) bool {
 	return false
 }
 
-// AddSourceDirectory adds a directory if it doesn't already exist.
+// AddInboundDirectory adds a directory if it doesn't already exist.
 // Returns true if the directory was added, false if it was a duplicate.
-func (c *Configuration) AddSourceDirectory(dir string) bool {
-	if c.HasSourceDirectory(dir) {
+func (c *Configuration) AddInboundDirectory(dir string) bool {
+	if c.HasInboundDirectory(dir) {
 		return false
 	}
-	c.SourceDirectories = append(c.SourceDirectories, dir)
+	c.InboundDirectories = append(c.InboundDirectories, dir)
 	return true
 }
 
@@ -196,9 +196,9 @@ func LoadOrCreate(filePath string) (*Configuration, error) {
 			// Return empty configuration with audit defaults if file doesn't exist
 			defaults := audit.DefaultAuditConfig()
 			return &Configuration{
-				SourceDirectories: []string{},
-				PrefixRules:       []PrefixRule{},
-				Audit:             &defaults,
+				InboundDirectories: []string{},
+				PrefixRules:        []PrefixRule{},
+				Audit:              &defaults,
 			}, nil
 		}
 		return nil, &ConfigError{

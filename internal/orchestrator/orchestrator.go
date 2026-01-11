@@ -102,9 +102,9 @@ func RunWithOptions(configPath string, options *Options) (*Summary, error) {
 		identityResolver = audit.NewIdentityResolver()
 	}
 
-	// Scan all source directories and collect files
+	// Scan all inbound directories and collect files
 	var allFiles []scanner.FileEntry
-	for _, sourceDir := range cfg.SourceDirectories {
+	for _, sourceDir := range cfg.InboundDirectories {
 		files, err := scanner.Scan(sourceDir)
 		if err != nil {
 			// Log error and continue with remaining directories (Requirement 2.2)
@@ -277,7 +277,7 @@ func processFileWithAudit(file scanner.FileEntry, cfg *config.Configuration, aud
 		// This is calculated the same way as in organizer.Organize
 		prefix := extractPrefixFromNormalisedFilename(classification.NormalisedFilename)
 		subfolder := fmt.Sprintf("%d %s", classification.Year, prefix)
-		destDir := filepath.Join(classification.TargetDirectory, subfolder)
+		destDir := filepath.Join(classification.OutboundDirectory, subfolder)
 		destFilename := classification.NormalisedFilename
 
 		// Check if this will be a duplicate

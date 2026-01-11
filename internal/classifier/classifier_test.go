@@ -85,8 +85,8 @@ func TestInvalidDateClassification(t *testing.T) {
 			// Create a rule that matches the prefix
 			rules := []config.PrefixRule{
 				{
-					Prefix:          prefix,
-					TargetDirectory: "/target",
+					Prefix:            prefix,
+					OutboundDirectory: "/target",
 				},
 			}
 
@@ -191,8 +191,8 @@ func genPrefixRules() gopter.Gen {
 		rules := make([]config.PrefixRule, len(prefixes))
 		for i, p := range prefixes {
 			rules[i] = config.PrefixRule{
-				Prefix:          p,
-				TargetDirectory: fmt.Sprintf("/target/%d", i),
+				Prefix:            p,
+				OutboundDirectory: fmt.Sprintf("/target/%d", i),
 			}
 		}
 		return rules
@@ -230,8 +230,8 @@ func TestDeterministicClassification(t *testing.T) {
 						t.Logf("Iteration %d: NormalisedFilename mismatch - expected %q, got %q", i, firstResult.NormalisedFilename, result.NormalisedFilename)
 						return false
 					}
-					if result.TargetDirectory != firstResult.TargetDirectory {
-						t.Logf("Iteration %d: TargetDirectory mismatch - expected %q, got %q", i, firstResult.TargetDirectory, result.TargetDirectory)
+					if result.OutboundDirectory != firstResult.OutboundDirectory {
+						t.Logf("Iteration %d: OutboundDirectory mismatch - expected %q, got %q", i, firstResult.OutboundDirectory, result.OutboundDirectory)
 						return false
 					}
 				} else {

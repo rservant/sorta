@@ -4,7 +4,7 @@ A file organization utility that declutters directories by moving files into str
 
 ## How It Works
 
-Sorta scans source directories for files matching this naming pattern:
+Sorta scans inbound directories for files matching this naming pattern:
 
 ```
 <prefix> <YYYY-MM-DD> <description>.<ext>
@@ -14,7 +14,7 @@ For example:
 - `Invoice 2024-03-15 Acme Corp.pdf` → moves to `Invoices/2024 Invoice/`
 - `receipt 2023-11-20 Amazon order.pdf` → moves to `Receipts/2023 Receipt/`
 
-Files that don't match any prefix rule go to a `for-review` subdirectory within each source directory.
+Files that don't match any prefix rule go to a `for-review` subdirectory within each inbound directory.
 
 ## Installation
 
@@ -64,7 +64,13 @@ Sorta uses subcommands for different operations:
 # Use custom config file
 ./sorta -c myconfig.json run
 ./sorta --config myconfig.json run
+
+# Enable verbose output for detailed progress
+./sorta -v run
+./sorta --verbose run
 ```
+
+The `-v`/`--verbose` flag can be combined with any command to show detailed progress information during execution.
 
 ### View Configuration
 
@@ -73,10 +79,10 @@ Sorta uses subcommands for different operations:
 ./sorta -c myconfig.json config
 ```
 
-### Add Source Directory
+### Add Inbound Directory
 
 ```bash
-./sorta add-source /path/to/directory
+./sorta add-inbound /path/to/directory
 ```
 
 Creates the config file if it doesn't exist.
@@ -142,14 +148,14 @@ Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`-
 
 ```json
 {
-  "sourceDirectories": [
+  "inboundDirectories": [
     "/Users/me/Downloads",
     "/Users/me/Desktop"
   ],
   "prefixRules": [
-    { "prefix": "Invoice", "targetDirectory": "/Users/me/Documents/Invoices" },
-    { "prefix": "Receipt", "targetDirectory": "/Users/me/Documents/Receipts" },
-    { "prefix": "Statement", "targetDirectory": "/Users/me/Documents/Statements" }
+    { "prefix": "Invoice", "outboundDirectory": "/Users/me/Documents/Invoices" },
+    { "prefix": "Receipt", "outboundDirectory": "/Users/me/Documents/Receipts" },
+    { "prefix": "Statement", "outboundDirectory": "/Users/me/Documents/Statements" }
   ],
   "audit": {
     "logDirectory": ".sorta/audit",
@@ -165,15 +171,15 @@ Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`-
 
 | Field | Description |
 |-------|-------------|
-| `sourceDirectories` | Directories to scan for files |
-| `prefixRules` | List of prefix-to-target mappings |
+| `inboundDirectories` | Directories to scan for files |
+| `prefixRules` | List of prefix-to-outbound mappings |
 | `audit.logDirectory` | Directory for audit log files (default: `.sorta/audit`) |
 | `audit.rotationSizeBytes` | Rotate log when it exceeds this size (default: 10MB) |
 | `audit.rotationPeriod` | Time-based rotation: `daily`, `weekly`, or empty (default: `daily`) |
 | `audit.retentionDays` | Delete logs older than this (0 = unlimited, default: 30) |
 | `audit.minRetentionDays` | Never delete logs younger than this (default: 7) |
 
-Note: The `forReviewDirectory` field is no longer used. Unclassified files are placed in a `for-review` subdirectory within each source directory.
+Note: The `forReviewDirectory` field is no longer used. Unclassified files are placed in a `for-review` subdirectory within each inbound directory.
 
 ## Matching Rules
 
@@ -199,7 +205,7 @@ The prefix in the filename is normalized to match the canonical casing from your
 
 ### Unclassified Files
 
-Files that don't match any prefix rule are moved to a `for-review` subdirectory within their source directory:
+Files that don't match any prefix rule are moved to a `for-review` subdirectory within their inbound directory:
 
 ```
 /Users/me/Downloads/

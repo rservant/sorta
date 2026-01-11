@@ -41,8 +41,8 @@ func genPrefixRule() gopter.Gen {
 		genNonEmptyAlphaString(),
 	).Map(func(vals []interface{}) config.PrefixRule {
 		return config.PrefixRule{
-			Prefix:          vals[0].(string),
-			TargetDirectory: vals[1].(string),
+			Prefix:            vals[0].(string),
+			OutboundDirectory: vals[1].(string),
 		}
 	})
 }
@@ -118,12 +118,12 @@ func TestLongestPrefixWins(t *testing.T) {
 			longPrefix := basePrefix + extension
 
 			shortRule := config.PrefixRule{
-				Prefix:          shortPrefix,
-				TargetDirectory: "/short",
+				Prefix:            shortPrefix,
+				OutboundDirectory: "/short",
 			}
 			longRule := config.PrefixRule{
-				Prefix:          longPrefix,
-				TargetDirectory: "/long",
+				Prefix:            longPrefix,
+				OutboundDirectory: "/long",
 			}
 
 			// Create filename that matches the longer prefix

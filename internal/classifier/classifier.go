@@ -23,12 +23,12 @@ type Classification struct {
 	Type               string // "CLASSIFIED" or "UNCLASSIFIED"
 	Year               int
 	NormalisedFilename string
-	TargetDirectory    string
+	OutboundDirectory  string
 	Reason             UnclassifiedReason
 }
 
 // Classify determines the classification of a file based on its filename and prefix rules.
-// For valid files, it returns CLASSIFIED with year, normalised filename, and target directory.
+// For valid files, it returns CLASSIFIED with year, normalised filename, and outbound directory.
 // For invalid files, it returns UNCLASSIFIED with the reason.
 func Classify(filename string, rules []config.PrefixRule) *Classification {
 	// Step 1: Match filename against prefix rules
@@ -77,7 +77,7 @@ func Classify(filename string, rules []config.PrefixRule) *Classification {
 		Type:               "CLASSIFIED",
 		Year:               isoDate.Year,
 		NormalisedFilename: normalisedFilename,
-		TargetDirectory:    matchResult.Rule.TargetDirectory,
+		OutboundDirectory:  matchResult.Rule.OutboundDirectory,
 	}
 }
 
@@ -149,7 +149,7 @@ func ClassifyWithMatchResult(filename string, matchResult *matcher.MatchResult) 
 		Type:               "CLASSIFIED",
 		Year:               isoDate.Year,
 		NormalisedFilename: normalisedFilename,
-		TargetDirectory:    matchResult.Rule.TargetDirectory,
+		OutboundDirectory:  matchResult.Rule.OutboundDirectory,
 	}
 }
 

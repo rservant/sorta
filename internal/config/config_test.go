@@ -12,8 +12,8 @@ import (
 	"github.com/leanovate/gopter/prop"
 )
 
-// Feature: config-auto-discover, Property 11: Configuration Round-Trip
-// Validates: Requirements 11.2
+// Feature: rename-source-target, Property 1: Configuration JSON Round-Trip
+// Validates: Requirements 1.1, 1.2, 1.3, 1.4
 
 // genNonEmptyString generates non-empty strings for configuration fields.
 func genNonEmptyString() gopter.Gen {
@@ -29,8 +29,8 @@ func genPrefixRule() gopter.Gen {
 		genNonEmptyString(),
 	).Map(func(vals []interface{}) PrefixRule {
 		return PrefixRule{
-			Prefix:          vals[0].(string),
-			TargetDirectory: vals[1].(string),
+			Prefix:            vals[0].(string),
+			OutboundDirectory: vals[1].(string),
 		}
 	})
 }
@@ -68,9 +68,9 @@ func genConfiguration() gopter.Gen {
 		genAuditConfig(),
 	).Map(func(vals []interface{}) *Configuration {
 		return &Configuration{
-			SourceDirectories: vals[0].([]string),
-			PrefixRules:       vals[1].([]PrefixRule),
-			Audit:             vals[2].(*audit.AuditConfig),
+			InboundDirectories: vals[0].([]string),
+			PrefixRules:        vals[1].([]PrefixRule),
+			Audit:              vals[2].(*audit.AuditConfig),
 		}
 	})
 }
@@ -109,35 +109,35 @@ func TestConfigurationRoundTrip(t *testing.T) {
 	properties.TestingRun(t)
 }
 
-// Feature: config-auto-discover, Property 3: Source Directory Duplicate Prevention
-// Validates: Requirements 3.4
-func TestSourceDirectoryDuplicatePrevention(t *testing.T) {
+// Feature: rename-source-target, Property 2: Inbound Directory Duplicate Prevention
+// Validates: Requirements 2.3, 3.2
+func TestInboundDirectoryDuplicatePrevention(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 
 	properties := gopter.NewProperties(parameters)
 
-	properties.Property("AddSourceDirectory does not add duplicate directories", prop.ForAll(
+	properties.Property("AddInboundDirectory does not add duplicate directories", prop.ForAll(
 		func(existingDirs []string, newDir string) bool {
 			// Create a configuration with existing directories
 			config := &Configuration{
-				SourceDirectories: existingDirs,
-				PrefixRules:       []PrefixRule{},
+				InboundDirectories: existingDirs,
+				PrefixRules:        []PrefixRule{},
 			}
 
 			// Check if the directory already exists
-			alreadyExists := config.HasSourceDirectory(newDir)
-			originalLen := len(config.SourceDirectories)
+			alreadyExists := config.HasInboundDirectory(newDir)
+			originalLen := len(config.InboundDirectories)
 
 			// Try to add the directory
-			added := config.AddSourceDirectory(newDir)
+			added := config.AddInboundDirectory(newDir)
 
 			if alreadyExists {
 				// If it already existed, it should not be added
-				return !added && len(config.SourceDirectories) == originalLen
+				return !added && len(config.InboundDirectories) == originalLen
 			}
 			// If it didn't exist, it should be added
-			return added && len(config.SourceDirectories) == originalLen+1 && config.HasSourceDirectory(newDir)
+			return added && len(config.InboundDirectories) == originalLen+1 && config.HasInboundDirectory(newDir)
 		},
 		gen.SliceOf(genNonEmptyString()),
 		genNonEmptyString(),
@@ -158,8 +158,8 @@ func TestPrefixRuleDuplicatePrevention(t *testing.T) {
 		func(existingRules []PrefixRule, newRule PrefixRule) bool {
 			// Create a configuration with existing rules
 			config := &Configuration{
-				SourceDirectories: []string{},
-				PrefixRules:       existingRules,
+				InboundDirectories: []string{},
+				PrefixRules:        existingRules,
 			}
 
 			// Check if the prefix already exists (case-insensitive)
@@ -192,8 +192,8 @@ func TestAuditConfigDefaultsAppliedWhenMissing(t *testing.T) {
 	tmpFile := filepath.Join(tmpDir, "config.json")
 
 	configJSON := `{
-		"sourceDirectories": ["source1"],
-		"prefixRules": [{"prefix": "Invoice", "targetDirectory": "invoices"}]
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}]
 	}`
 
 	if err := os.WriteFile(tmpFile, []byte(configJSON), 0644); err != nil {
@@ -233,8 +233,8 @@ func TestAuditConfigCustomValuesOverrideDefaults(t *testing.T) {
 	tmpFile := filepath.Join(tmpDir, "config.json")
 
 	configJSON := `{
-		"sourceDirectories": ["source1"],
-		"prefixRules": [{"prefix": "Invoice", "targetDirectory": "invoices"}],
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}],
 		"audit": {
 			"logDirectory": "/custom/audit/logs",
 			"rotationSizeBytes": 52428800,
@@ -287,8 +287,8 @@ func TestAuditConfigPartialOverrideAppliesDefaults(t *testing.T) {
 
 	// Only specify some audit fields, others should get defaults
 	configJSON := `{
-		"sourceDirectories": ["source1"],
-		"prefixRules": [{"prefix": "Invoice", "targetDirectory": "invoices"}],
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}],
 		"audit": {
 			"logDirectory": "/custom/logs",
 			"retentionDays": 60
@@ -330,8 +330,8 @@ func TestLoadOrCreateAppliesAuditDefaults(t *testing.T) {
 	tmpFile := filepath.Join(tmpDir, "config.json")
 
 	configJSON := `{
-		"sourceDirectories": ["source1"],
-		"prefixRules": [{"prefix": "Invoice", "targetDirectory": "invoices"}]
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}]
 	}`
 
 	if err := os.WriteFile(tmpFile, []byte(configJSON), 0644); err != nil {

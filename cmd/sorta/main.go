@@ -119,8 +119,8 @@ func main() {
 	switch parsed.Command {
 	case "config":
 		exitCode = runConfigCommand(parsed.ConfigPath, parsed.Verbose)
-	case "add-source":
-		exitCode = runAddSourceCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
+	case "add-inbound":
+		exitCode = runAddInboundCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "discover":
 		exitCode = runDiscoverCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "run":
@@ -173,11 +173,11 @@ func displayConfig(cfg *config.Configuration) string {
 	var sb strings.Builder
 
 	sb.WriteString("Configuration:\n")
-	sb.WriteString("\nSource Directories:\n")
-	if len(cfg.SourceDirectories) == 0 {
+	sb.WriteString("\nInbound Directories:\n")
+	if len(cfg.InboundDirectories) == 0 {
 		sb.WriteString("  (none)\n")
 	} else {
-		for _, dir := range cfg.SourceDirectories {
+		for _, dir := range cfg.InboundDirectories {
 			sb.WriteString(fmt.Sprintf("  - %s\n", dir))
 		}
 	}
@@ -187,7 +187,7 @@ func displayConfig(cfg *config.Configuration) string {
 		sb.WriteString("  (none)\n")
 	} else {
 		for _, rule := range cfg.PrefixRules {
-			sb.WriteString(fmt.Sprintf("  - %s -> %s\n", rule.Prefix, rule.TargetDirectory))
+			sb.WriteString(fmt.Sprintf("  - %s -> %s\n", rule.Prefix, rule.OutboundDirectory))
 		}
 	}
 
@@ -200,11 +200,11 @@ func displayConfig(cfg *config.Configuration) string {
 func displayConfigWithOutput(cfg *config.Configuration, out *output.Output) {
 	out.Info("Configuration:")
 	out.Info("")
-	out.Info("Source Directories:")
-	if len(cfg.SourceDirectories) == 0 {
+	out.Info("Inbound Directories:")
+	if len(cfg.InboundDirectories) == 0 {
 		out.Info("  (none)")
 	} else {
-		for _, dir := range cfg.SourceDirectories {
+		for _, dir := range cfg.InboundDirectories {
 			out.Info("  - %s", dir)
 		}
 	}
@@ -215,14 +215,14 @@ func displayConfigWithOutput(cfg *config.Configuration, out *output.Output) {
 		out.Info("  (none)")
 	} else {
 		for _, rule := range cfg.PrefixRules {
-			out.Info("  - %s -> %s", rule.Prefix, rule.TargetDirectory)
+			out.Info("  - %s -> %s", rule.Prefix, rule.OutboundDirectory)
 		}
 	}
 }
 
-// runAddSourceCommand adds a source directory to the configuration.
+// runAddInboundCommand adds an inbound directory to the configuration.
 // Requirements: 1.2 - verbose flag passed to command
-func runAddSourceCommand(configPath string, args []string, verbose bool) int {
+func runAddInboundCommand(configPath string, args []string, verbose bool) int {
 	// Create output instance with verbose config
 	outConfig := output.DefaultConfig()
 	outConfig.Verbose = verbose
@@ -230,7 +230,7 @@ func runAddSourceCommand(configPath string, args []string, verbose bool) int {
 
 	if len(args) == 0 {
 		out.Error("Error: missing directory argument")
-		out.Error("Usage: sorta add-source <directory>")
+		out.Error("Usage: sorta add-inbound <directory>")
 		return 1
 	}
 
@@ -244,7 +244,7 @@ func runAddSourceCommand(configPath string, args []string, verbose bool) int {
 	}
 
 	// Try to add the directory
-	if !cfg.AddSourceDirectory(directory) {
+	if !cfg.AddInboundDirectory(directory) {
 		out.Info("Directory already exists in configuration: %s", directory)
 		return 0
 	}
@@ -255,7 +255,7 @@ func runAddSourceCommand(configPath string, args []string, verbose bool) int {
 		return 1
 	}
 
-	out.Info("Added source directory: %s", directory)
+	out.Info("Added inbound directory: %s", directory)
 	return 0
 }
 
@@ -331,8 +331,8 @@ func runDiscoverCommand(configPath string, args []string, verbose bool) int {
 	// Add new rules to configuration
 	for _, rule := range result.NewRules {
 		cfg.AddPrefixRule(config.PrefixRule{
-			Prefix:          rule.Prefix,
-			TargetDirectory: rule.TargetDirectory,
+			Prefix:            rule.Prefix,
+			OutboundDirectory: rule.TargetDirectory,
 		})
 	}
 
@@ -1058,7 +1058,7 @@ Usage: sorta [flags] <command> [arguments]
 
 Commands:
   config                Display current configuration
-  add-source <dir>      Add a source directory to configuration
+  add-inbound <dir>     Add an inbound directory to configuration
   discover <dir>        Auto-discover prefix rules from existing directories
   run                   Execute file organization
   audit <subcommand>    View audit trail history
@@ -1080,7 +1080,7 @@ Undo Options:
 
 Examples:
   sorta config                          Show current configuration
-  sorta add-source /path/to/source      Add a source directory
+  sorta add-inbound /path/to/inbound    Add an inbound directory
   sorta discover /path/to/organized     Discover prefix rules from existing files
   sorta run                             Organize files according to configuration
   sorta -v run                          Run with verbose output
@@ -1092,14 +1092,14 @@ Examples:
 
 Config file format (JSON):
   {
-    "sourceDirectories": ["/path/to/source"],
+    "inboundDirectories": ["/path/to/inbound"],
     "prefixRules": [
-      { "prefix": "Invoice", "targetDirectory": "/path/to/invoices" }
+      { "prefix": "Invoice", "outboundDirectory": "/path/to/invoices" }
     ]
   }
 
 Files matching "<prefix> <YYYY-MM-DD> <description>" are moved to:
-  <targetDirectory>/<year> <prefix>/<normalized filename>
+  <outboundDirectory>/<year> <prefix>/<normalized filename>
 
-Files not matching any rule go to a "for-review" subdirectory within their source directory.`)
+Files not matching any rule go to a "for-review" subdirectory within their inbound directory.`)
 }

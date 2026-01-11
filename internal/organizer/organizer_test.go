@@ -71,8 +71,8 @@ func TestUnclassifiedFilenamePreservation(t *testing.T) {
 
 			// Create config
 			cfg := &config.Configuration{
-				SourceDirectories: []string{sourceDir},
-				PrefixRules:       []config.PrefixRule{{Prefix: "Invoice", TargetDirectory: "/tmp/invoices"}},
+				InboundDirectories: []string{sourceDir},
+				PrefixRules:        []config.PrefixRule{{Prefix: "Invoice", OutboundDirectory: "/tmp/invoices"}},
 			}
 
 			// Organize the file
@@ -194,9 +194,9 @@ func TestFileContentIntegrity(t *testing.T) {
 
 			// Create config with matching prefix rule
 			cfg := &config.Configuration{
-				SourceDirectories: []string{sourceDir},
+				InboundDirectories: []string{sourceDir},
 				PrefixRules: []config.PrefixRule{
-					{Prefix: prefix, TargetDirectory: targetDir},
+					{Prefix: prefix, OutboundDirectory: targetDir},
 				},
 			}
 
@@ -314,8 +314,8 @@ func TestForReviewPathGeneration_Property(t *testing.T) {
 
 			// Create config
 			cfg := &config.Configuration{
-				SourceDirectories: []string{sourceDir},
-				PrefixRules:       []config.PrefixRule{{Prefix: "Invoice", TargetDirectory: "/tmp/invoices"}},
+				InboundDirectories: []string{sourceDir},
+				PrefixRules:        []config.PrefixRule{{Prefix: "Invoice", OutboundDirectory: "/tmp/invoices"}},
 			}
 
 			// Organize the file

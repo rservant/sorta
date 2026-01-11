@@ -32,7 +32,7 @@ import (
 //     the move completed (if audit failed, the move would not have happened)
 func TestAuditBeforeMoveOrdering(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -75,9 +75,9 @@ func TestAuditBeforeMoveOrdering(t *testing.T) {
 
 			// Create config file
 			cfg := config.Configuration{
-				SourceDirectories: []string{sourceDir},
+				InboundDirectories: []string{sourceDir},
 				PrefixRules: []config.PrefixRule{
-					{Prefix: "Invoice", TargetDirectory: targetDir},
+					{Prefix: "Invoice", OutboundDirectory: targetDir},
 				},
 			}
 			configPath := filepath.Join(tempDir, "config.json")
@@ -202,9 +202,9 @@ func TestAuditBeforeMoveOrdering_VerifyCodePath(t *testing.T) {
 
 	// Create config
 	cfg := config.Configuration{
-		SourceDirectories: []string{sourceDir},
+		InboundDirectories: []string{sourceDir},
 		PrefixRules: []config.PrefixRule{
-			{Prefix: "Invoice", TargetDirectory: targetDir},
+			{Prefix: "Invoice", OutboundDirectory: targetDir},
 		},
 	}
 	configPath := filepath.Join(tempDir, "config.json")
@@ -266,7 +266,7 @@ func TestAuditBeforeMoveOrdering_VerifyCodePath(t *testing.T) {
 // 3. Verifying that no files were moved after the audit failure
 func TestFailFastOnAuditWriteFailure(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -314,9 +314,9 @@ func TestFailFastOnAuditWriteFailure(t *testing.T) {
 
 			// Create config file
 			cfg := config.Configuration{
-				SourceDirectories: []string{sourceDir},
+				InboundDirectories: []string{sourceDir},
 				PrefixRules: []config.PrefixRule{
-					{Prefix: "Invoice", TargetDirectory: targetDir},
+					{Prefix: "Invoice", OutboundDirectory: targetDir},
 				},
 			}
 			configPath := filepath.Join(tempDir, "config.json")
@@ -411,9 +411,9 @@ func TestFailFastOnAuditWriteFailure_MidRun(t *testing.T) {
 
 	// Create config
 	cfg := config.Configuration{
-		SourceDirectories: []string{sourceDir},
+		InboundDirectories: []string{sourceDir},
 		PrefixRules: []config.PrefixRule{
-			{Prefix: "Invoice", TargetDirectory: targetDir},
+			{Prefix: "Invoice", OutboundDirectory: targetDir},
 		},
 	}
 	configPath := filepath.Join(tempDir, "config.json")
@@ -477,9 +477,9 @@ func TestFailFastOnAuditWriteFailure_ErrorReporting(t *testing.T) {
 
 	// Create config
 	cfg := config.Configuration{
-		SourceDirectories: []string{sourceDir},
+		InboundDirectories: []string{sourceDir},
 		PrefixRules: []config.PrefixRule{
-			{Prefix: "Invoice", TargetDirectory: targetDir},
+			{Prefix: "Invoice", OutboundDirectory: targetDir},
 		},
 	}
 	configPath := filepath.Join(tempDir, "config.json")

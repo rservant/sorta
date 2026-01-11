@@ -63,7 +63,7 @@ func Organize(file scanner.FileEntry, classification *classifier.Classification,
 		// The normalised filename starts with the canonical prefix
 		prefix := extractPrefixFromNormalisedFilename(classification.NormalisedFilename)
 		subfolder := fmt.Sprintf("%d %s", classification.Year, prefix)
-		destDir = filepath.Join(classification.TargetDirectory, subfolder)
+		destDir = filepath.Join(classification.OutboundDirectory, subfolder)
 		destFilename = classification.NormalisedFilename
 	} else {
 		// Move to for-review subdirectory within the source directory
