@@ -37,11 +37,16 @@ type Summary struct {
 	ScanErrors     []error
 }
 
+// ProgressCallback is called during file processing to report progress.
+// Parameters: current file index (1-based), total files, file path, result of processing
+type ProgressCallback func(current, total int, file string, result *Result)
+
 // Options contains optional configuration for a Sorta run.
 type Options struct {
-	AuditConfig *audit.AuditConfig // Audit configuration (nil to disable auditing)
-	AppVersion  string             // Application version for audit records
-	MachineID   string             // Machine identifier for audit records
+	AuditConfig      *audit.AuditConfig // Audit configuration (nil to disable auditing)
+	AppVersion       string             // Application version for audit records
+	MachineID        string             // Machine identifier for audit records
+	ProgressCallback ProgressCallback   // Progress reporting callback (optional)
 }
 
 // Run executes the Sorta file organization workflow.
@@ -115,7 +120,7 @@ func RunWithOptions(configPath string, options *Options) (*Summary, error) {
 	var auditError error
 
 	// Process each file
-	for _, file := range allFiles {
+	for i, file := range allFiles {
 		result := processFileWithAudit(file, cfg, auditWriter, identityResolver)
 		summary.Results = append(summary.Results, result)
 
@@ -133,6 +138,12 @@ func RunWithOptions(configPath string, options *Options) (*Summary, error) {
 			} else {
 				summary.ErrorCount++
 			}
+		}
+
+		// Call progress callback after each file is processed
+		// Requirements: 5.1 - progress indicator for run command
+		if options != nil && options.ProgressCallback != nil {
+			options.ProgressCallback(i+1, summary.TotalFiles, file.FullPath, &result)
 		}
 
 		// Check for audit write failure - fail-fast

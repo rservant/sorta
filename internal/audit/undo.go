@@ -53,6 +53,22 @@ type CrossMachineUndoConfig struct {
 	OriginatingMachine string        // Machine ID where the original run was executed
 }
 
+// UndoCallback is called during undo operations to report progress.
+// Requirements: 4.1, 4.2, 4.3, 5.3
+type UndoCallback func(event UndoProgressEvent)
+
+// UndoProgressEvent represents a progress event during undo operations.
+type UndoProgressEvent struct {
+	Type         string // "restore", "skip", "error", "verify"
+	Current      int    // Current event number being processed
+	Total        int    // Total events to process
+	SourcePath   string // Original source path (where file will be restored to)
+	DestPath     string // Current destination path (where file is now)
+	Reason       string // Reason for skip or error
+	VerifyStatus string // Verification status: "match", "mismatch", "not_found"
+	Success      bool   // Whether the operation succeeded
+}
+
 // UndoEngine orchestrates undo operations.
 // It processes events in reverse chronological order and verifies file identity
 // before each undo operation.
@@ -63,6 +79,7 @@ type UndoEngine struct {
 	identityResolver *IdentityResolver
 	appVersion       string
 	machineID        string
+	callback         UndoCallback
 }
 
 // NewUndoEngine creates a new UndoEngine with the given reader and writer.
@@ -73,6 +90,19 @@ func NewUndoEngine(reader *AuditReader, writer *AuditWriter, appVersion, machine
 		identityResolver: NewIdentityResolver(),
 		appVersion:       appVersion,
 		machineID:        machineID,
+	}
+}
+
+// SetCallback sets the progress callback for the undo engine.
+// Requirements: 4.1, 4.2, 4.3, 5.3
+func (e *UndoEngine) SetCallback(callback UndoCallback) {
+	e.callback = callback
+}
+
+// notifyCallback calls the callback if set.
+func (e *UndoEngine) notifyCallback(event UndoProgressEvent) {
+	if e.callback != nil {
+		e.callback(event)
 	}
 }
 
@@ -166,22 +196,37 @@ func (e *UndoEngine) UndoRunCrossMachine(runID RunID, config CrossMachineUndoCon
 	result.TotalEvents = len(sortedEvents)
 
 	// Process each event
-	for _, event := range sortedEvents {
+	for i, event := range sortedEvents {
+		// Apply path mappings for callback reporting
+		sourcePath := e.applyPathMappings(event.SourcePath, config.PathMappings)
+		destPath := e.applyPathMappings(event.DestinationPath, config.PathMappings)
+
 		// Check for conflicts with subsequent runs before undoing
 		// Requirements: 6.5, 6.6
 		if conflict := e.checkConflict(event, conflictMap, config.PathMappings); conflict != nil {
 			e.recordConflictDetected(event.SourcePath, event.DestinationPath, conflict.ConflictingRunID)
 			result.Failed++
+			errMsg := fmt.Sprintf("file was modified by subsequent run %s", conflict.ConflictingRunID)
 			result.FailureDetails = append(result.FailureDetails, UndoError{
 				SourcePath: event.SourcePath,
 				DestPath:   event.DestinationPath,
 				Reason:     ReasonConflictWithLaterRun,
-				Message:    fmt.Sprintf("file was modified by subsequent run %s", conflict.ConflictingRunID),
+				Message:    errMsg,
+			})
+			// Notify callback about conflict error
+			e.notifyCallback(UndoProgressEvent{
+				Type:       "error",
+				Current:    i + 1,
+				Total:      result.TotalEvents,
+				SourcePath: sourcePath,
+				DestPath:   destPath,
+				Reason:     errMsg,
+				Success:    false,
 			})
 			continue
 		}
 
-		wasNoOp, undoErr := e.undoEventCrossMachine(event, config)
+		wasNoOp, undoErr := e.undoEventCrossMachineWithCallback(event, config, i+1, result.TotalEvents)
 		if undoErr != nil {
 			result.Failed++
 			result.FailureDetails = append(result.FailureDetails, *undoErr)
@@ -363,21 +408,55 @@ func (e *UndoEngine) undoEventWithNoOpFlag(event AuditEvent, pathMappings []Path
 // Returns (wasNoOp, error) where wasNoOp is true if the event required no action.
 // Requirements: 5.3, 5.4, 5.5, 5.6, 5.7, 7.2, 7.3, 7.5
 func (e *UndoEngine) undoEventCrossMachine(event AuditEvent, config CrossMachineUndoConfig) (bool, *UndoError) {
+	return e.undoEventCrossMachineWithCallback(event, config, 0, 0)
+}
+
+// undoEventCrossMachineWithCallback processes a single event for undo with cross-machine support and callback notifications.
+// It supports path mappings and hash-based file discovery.
+// Returns (wasNoOp, error) where wasNoOp is true if the event required no action.
+// Requirements: 4.1, 4.2, 4.3, 5.3, 5.4, 5.5, 5.6, 5.7, 7.2, 7.3, 7.5
+func (e *UndoEngine) undoEventCrossMachineWithCallback(event AuditEvent, config CrossMachineUndoConfig, current, total int) (bool, *UndoError) {
+	sourcePath := e.applyPathMappings(event.SourcePath, config.PathMappings)
+	destPath := e.applyPathMappings(event.DestinationPath, config.PathMappings)
+
 	switch event.EventType {
 	case EventMove:
-		return false, e.undoMoveCrossMachine(event, config)
+		undoErr := e.undoMoveCrossMachineWithCallback(event, config, current, total)
+		return false, undoErr
 	case EventRouteToReview:
-		return false, e.undoRouteToReviewCrossMachine(event, config)
+		undoErr := e.undoRouteToReviewCrossMachineWithCallback(event, config, current, total)
+		return false, undoErr
 	case EventDuplicateDetected:
-		return e.undoDuplicateCrossMachine(event, config)
+		return e.undoDuplicateCrossMachineWithCallback(event, config, current, total)
 	case EventSkip, EventParseFailure, EventValidationFailure:
 		// No-op events - record UNDO_SKIP
 		// Requirements: 5.6
 		e.recordUndoSkip(event.SourcePath, ReasonNoOpEvent)
+		// Notify callback about skip
+		// Requirement 4.2: Display skip reasons for files that cannot be restored
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "skip",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     "no-op event (original operation did not move file)",
+			Success:    true,
+		})
 		return true, nil
 	case EventError:
 		// Error events are also no-op for undo
 		e.recordUndoSkip(event.SourcePath, ReasonNoOpEvent)
+		// Notify callback about skip
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "skip",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     "no-op event (original operation was an error)",
+			Success:    true,
+		})
 		return true, nil
 	default:
 		// Unknown event type - skip
@@ -406,6 +485,14 @@ func (e *UndoEngine) undoMove(event AuditEvent, pathMappings []PathMapping) *Und
 // when the file is not at the expected path.
 // Requirements: 5.3, 5.7, 7.3, 7.4, 7.5, 13.1, 13.2, 13.3, 13.4, 13.5
 func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineUndoConfig) *UndoError {
+	return e.undoMoveCrossMachineWithCallback(event, config, 0, 0)
+}
+
+// undoMoveCrossMachineWithCallback undoes a MOVE event with cross-machine support and callback notifications.
+// It uses content hash as primary identity and searches configured directories
+// when the file is not at the expected path.
+// Requirements: 4.1, 4.2, 4.3, 5.3, 5.7, 7.3, 7.4, 7.5, 13.1, 13.2, 13.3, 13.4, 13.5
+func (e *UndoEngine) undoMoveCrossMachineWithCallback(event AuditEvent, config CrossMachineUndoConfig, current, total int) *UndoError {
 	sourcePath := e.applyPathMappings(event.SourcePath, config.PathMappings)
 	destPath := e.applyPathMappings(event.DestinationPath, config.PathMappings)
 
@@ -414,6 +501,16 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 	actualFilePath, findErr := e.findFileForUndo(destPath, event.FileIdentity, config.SearchDirectories)
 	if findErr != nil {
 		e.recordSourceMissing(sourcePath, destPath)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     findErr.Message,
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   destPath,
@@ -434,6 +531,18 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 		match, err := e.identityResolver.VerifyIdentity(actualFilePath, *event.FileIdentity)
 		if err != nil {
 			e.recordIdentityMismatch(sourcePath, actualFilePath, fmt.Sprintf("identity verification error: %v", err))
+			// Notify callback about verification failure
+			// Requirement 4.3: Display verification status for file identity checks
+			e.notifyCallback(UndoProgressEvent{
+				Type:         "verify",
+				Current:      current,
+				Total:        total,
+				SourcePath:   sourcePath,
+				DestPath:     actualFilePath,
+				VerifyStatus: "error",
+				Reason:       fmt.Sprintf("identity verification error: %v", err),
+				Success:      false,
+			})
 			return &UndoError{
 				SourcePath: sourcePath,
 				DestPath:   actualFilePath,
@@ -445,6 +554,17 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 		switch match {
 		case IdentityNotFound:
 			e.recordSourceMissing(sourcePath, actualFilePath)
+			// Notify callback about verification failure
+			e.notifyCallback(UndoProgressEvent{
+				Type:         "verify",
+				Current:      current,
+				Total:        total,
+				SourcePath:   sourcePath,
+				DestPath:     actualFilePath,
+				VerifyStatus: "not_found",
+				Reason:       "file not found at destination",
+				Success:      false,
+			})
 			return &UndoError{
 				SourcePath: sourcePath,
 				DestPath:   actualFilePath,
@@ -455,6 +575,17 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 			// File exists but content has changed - use CONTENT_CHANGED event
 			// Requirements: 13.4
 			e.recordContentChanged(sourcePath, actualFilePath, "file content has changed since original operation")
+			// Notify callback about verification failure
+			e.notifyCallback(UndoProgressEvent{
+				Type:         "verify",
+				Current:      current,
+				Total:        total,
+				SourcePath:   sourcePath,
+				DestPath:     actualFilePath,
+				VerifyStatus: "mismatch",
+				Reason:       "file content has changed since original operation",
+				Success:      false,
+			})
 			return &UndoError{
 				SourcePath: sourcePath,
 				DestPath:   actualFilePath,
@@ -464,12 +595,35 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 		case IdentitySizeMismatch:
 			// File exists but size differs - also indicates content change
 			e.recordContentChanged(sourcePath, actualFilePath, "file size has changed since original operation")
+			// Notify callback about verification failure
+			e.notifyCallback(UndoProgressEvent{
+				Type:         "verify",
+				Current:      current,
+				Total:        total,
+				SourcePath:   sourcePath,
+				DestPath:     actualFilePath,
+				VerifyStatus: "mismatch",
+				Reason:       "file size has changed since original operation",
+				Success:      false,
+			})
 			return &UndoError{
 				SourcePath: sourcePath,
 				DestPath:   actualFilePath,
 				Reason:     ReasonIdentityMismatch,
 				Message:    "file size has changed since original operation",
 			}
+		case IdentityMatches:
+			// Notify callback about successful verification
+			// Requirement 4.3: Display verification status for file identity checks
+			e.notifyCallback(UndoProgressEvent{
+				Type:         "verify",
+				Current:      current,
+				Total:        total,
+				SourcePath:   sourcePath,
+				DestPath:     actualFilePath,
+				VerifyStatus: "match",
+				Success:      true,
+			})
 		}
 	}
 
@@ -477,6 +631,16 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 	// Requirements: 13.1, 13.2
 	if _, err := os.Stat(sourcePath); err == nil {
 		e.recordCollision(sourcePath, actualFilePath)
+		// Notify callback about collision error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualFilePath,
+			Reason:     "original location already has a file",
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   actualFilePath,
@@ -489,6 +653,16 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 	sourceDir := filepath.Dir(sourcePath)
 	if err := os.MkdirAll(sourceDir, 0755); err != nil {
 		e.recordUndoError(sourcePath, actualFilePath, err)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualFilePath,
+			Reason:     fmt.Sprintf("failed to create source directory: %v", err),
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   actualFilePath,
@@ -500,6 +674,16 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 	// Perform the undo move
 	if err := os.Rename(actualFilePath, sourcePath); err != nil {
 		e.recordUndoError(sourcePath, actualFilePath, err)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualFilePath,
+			Reason:     fmt.Sprintf("failed to move file: %v", err),
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   actualFilePath,
@@ -510,6 +694,18 @@ func (e *UndoEngine) undoMoveCrossMachine(event AuditEvent, config CrossMachineU
 
 	// Record successful undo
 	e.recordUndoMove(sourcePath, actualFilePath, event.FileIdentity)
+
+	// Notify callback about successful restore
+	// Requirement 4.1: Display each file being restored with source and destination
+	e.notifyCallback(UndoProgressEvent{
+		Type:       "restore",
+		Current:    current,
+		Total:      total,
+		SourcePath: sourcePath,
+		DestPath:   actualFilePath,
+		Success:    true,
+	})
+
 	return nil
 }
 
@@ -606,6 +802,12 @@ func (e *UndoEngine) undoRouteToReview(event AuditEvent, pathMappings []PathMapp
 // undoRouteToReviewCrossMachine undoes a ROUTE_TO_REVIEW event with cross-machine support.
 // Requirements: 5.4, 7.3, 7.5
 func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config CrossMachineUndoConfig) *UndoError {
+	return e.undoRouteToReviewCrossMachineWithCallback(event, config, 0, 0)
+}
+
+// undoRouteToReviewCrossMachineWithCallback undoes a ROUTE_TO_REVIEW event with cross-machine support and callback notifications.
+// Requirements: 4.1, 4.2, 4.3, 5.4, 7.3, 7.5
+func (e *UndoEngine) undoRouteToReviewCrossMachineWithCallback(event AuditEvent, config CrossMachineUndoConfig, current, total int) *UndoError {
 	sourcePath := e.applyPathMappings(event.SourcePath, config.PathMappings)
 	destPath := e.applyPathMappings(event.DestinationPath, config.PathMappings)
 
@@ -618,6 +820,16 @@ func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config Cros
 				destPath = matches[0]
 			} else {
 				e.recordSourceMissing(sourcePath, destPath)
+				// Notify callback about error
+				e.notifyCallback(UndoProgressEvent{
+					Type:       "error",
+					Current:    current,
+					Total:      total,
+					SourcePath: sourcePath,
+					DestPath:   destPath,
+					Reason:     "file not found in review directory",
+					Success:    false,
+				})
 				return &UndoError{
 					SourcePath: sourcePath,
 					DestPath:   destPath,
@@ -627,6 +839,16 @@ func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config Cros
 			}
 		} else {
 			e.recordSourceMissing(sourcePath, destPath)
+			// Notify callback about error
+			e.notifyCallback(UndoProgressEvent{
+				Type:       "error",
+				Current:    current,
+				Total:      total,
+				SourcePath: sourcePath,
+				DestPath:   destPath,
+				Reason:     "file not found in review directory",
+				Success:    false,
+			})
 			return &UndoError{
 				SourcePath: sourcePath,
 				DestPath:   destPath,
@@ -639,6 +861,16 @@ func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config Cros
 	// Check if destination (original source) already has a file
 	if _, err := os.Stat(sourcePath); err == nil {
 		e.recordCollision(sourcePath, destPath)
+		// Notify callback about collision error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     "original location already has a file",
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   destPath,
@@ -651,6 +883,16 @@ func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config Cros
 	sourceDir := filepath.Dir(sourcePath)
 	if err := os.MkdirAll(sourceDir, 0755); err != nil {
 		e.recordUndoError(sourcePath, destPath, err)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     fmt.Sprintf("failed to create source directory: %v", err),
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   destPath,
@@ -662,6 +904,16 @@ func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config Cros
 	// Perform the undo move
 	if err := os.Rename(destPath, sourcePath); err != nil {
 		e.recordUndoError(sourcePath, destPath, err)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     fmt.Sprintf("failed to move file: %v", err),
+			Success:    false,
+		})
 		return &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   destPath,
@@ -672,6 +924,18 @@ func (e *UndoEngine) undoRouteToReviewCrossMachine(event AuditEvent, config Cros
 
 	// Record successful undo
 	e.recordUndoMove(sourcePath, destPath, nil)
+
+	// Notify callback about successful restore
+	// Requirement 4.1: Display each file being restored with source and destination
+	e.notifyCallback(UndoProgressEvent{
+		Type:       "restore",
+		Current:    current,
+		Total:      total,
+		SourcePath: sourcePath,
+		DestPath:   destPath,
+		Success:    true,
+	})
+
 	return nil
 }
 
@@ -697,10 +961,28 @@ func (e *UndoEngine) undoDuplicateWithNoOpFlag(event AuditEvent, pathMappings []
 // undoDuplicateCrossMachine undoes a DUPLICATE_DETECTED event with cross-machine support.
 // Requirements: 5.5, 7.3, 7.5
 func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMachineUndoConfig) (bool, *UndoError) {
+	return e.undoDuplicateCrossMachineWithCallback(event, config, 0, 0)
+}
+
+// undoDuplicateCrossMachineWithCallback undoes a DUPLICATE_DETECTED event with cross-machine support and callback notifications.
+// Requirements: 4.1, 4.2, 5.5, 7.3, 7.5
+func (e *UndoEngine) undoDuplicateCrossMachineWithCallback(event AuditEvent, config CrossMachineUndoConfig, current, total int) (bool, *UndoError) {
 	// For duplicates that were renamed, we need to restore the original filename
 	if event.ReasonCode != ReasonDuplicateRenamed {
 		// If not renamed, it's a no-op
 		e.recordUndoSkip(event.SourcePath, ReasonNoOpEvent)
+		// Notify callback about skip
+		sourcePath := e.applyPathMappings(event.SourcePath, config.PathMappings)
+		destPath := e.applyPathMappings(event.DestinationPath, config.PathMappings)
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "skip",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   destPath,
+			Reason:     "duplicate was not renamed, no action needed",
+			Success:    true,
+		})
 		return true, nil
 	}
 
@@ -716,6 +998,16 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 	if intendedDest == "" {
 		// Can't undo without knowing the intended destination
 		e.recordUndoSkip(sourcePath, ReasonNoOpEvent)
+		// Notify callback about skip
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "skip",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualDest,
+			Reason:     "missing intended destination metadata",
+			Success:    true,
+		})
 		return true, nil
 	}
 
@@ -728,6 +1020,16 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 				actualDest = matches[0]
 			} else {
 				e.recordSourceMissing(sourcePath, actualDest)
+				// Notify callback about error
+				e.notifyCallback(UndoProgressEvent{
+					Type:       "error",
+					Current:    current,
+					Total:      total,
+					SourcePath: sourcePath,
+					DestPath:   actualDest,
+					Reason:     "renamed file not found",
+					Success:    false,
+				})
 				return false, &UndoError{
 					SourcePath: sourcePath,
 					DestPath:   actualDest,
@@ -737,6 +1039,16 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 			}
 		} else {
 			e.recordSourceMissing(sourcePath, actualDest)
+			// Notify callback about error
+			e.notifyCallback(UndoProgressEvent{
+				Type:       "error",
+				Current:    current,
+				Total:      total,
+				SourcePath: sourcePath,
+				DestPath:   actualDest,
+				Reason:     "renamed file not found",
+				Success:    false,
+			})
 			return false, &UndoError{
 				SourcePath: sourcePath,
 				DestPath:   actualDest,
@@ -749,6 +1061,16 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 	// Move file back to original source
 	if _, err := os.Stat(sourcePath); err == nil {
 		e.recordCollision(sourcePath, actualDest)
+		// Notify callback about collision error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualDest,
+			Reason:     "original location already has a file",
+			Success:    false,
+		})
 		return false, &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   actualDest,
@@ -761,6 +1083,16 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 	sourceDir := filepath.Dir(sourcePath)
 	if err := os.MkdirAll(sourceDir, 0755); err != nil {
 		e.recordUndoError(sourcePath, actualDest, err)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualDest,
+			Reason:     fmt.Sprintf("failed to create source directory: %v", err),
+			Success:    false,
+		})
 		return false, &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   actualDest,
@@ -771,6 +1103,16 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 
 	if err := os.Rename(actualDest, sourcePath); err != nil {
 		e.recordUndoError(sourcePath, actualDest, err)
+		// Notify callback about error
+		e.notifyCallback(UndoProgressEvent{
+			Type:       "error",
+			Current:    current,
+			Total:      total,
+			SourcePath: sourcePath,
+			DestPath:   actualDest,
+			Reason:     fmt.Sprintf("failed to restore file: %v", err),
+			Success:    false,
+		})
 		return false, &UndoError{
 			SourcePath: sourcePath,
 			DestPath:   actualDest,
@@ -780,6 +1122,18 @@ func (e *UndoEngine) undoDuplicateCrossMachine(event AuditEvent, config CrossMac
 	}
 
 	e.recordUndoMove(sourcePath, actualDest, nil)
+
+	// Notify callback about successful restore
+	// Requirement 4.1: Display each file being restored with source and destination
+	e.notifyCallback(UndoProgressEvent{
+		Type:       "restore",
+		Current:    current,
+		Total:      total,
+		SourcePath: sourcePath,
+		DestPath:   actualDest,
+		Success:    true,
+	})
+
 	return false, nil
 }
 

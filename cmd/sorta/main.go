@@ -11,6 +11,7 @@ import (
 	"sorta/internal/config"
 	"sorta/internal/discovery"
 	"sorta/internal/orchestrator"
+	"sorta/internal/output"
 	"strings"
 )
 
@@ -21,16 +22,19 @@ type ParseResult struct {
 	Command    string
 	CmdArgs    []string
 	ConfigPath string
+	Verbose    bool
 }
 
-// parseArgs parses command line arguments and extracts the command, command arguments, and config path.
-// It handles -c/--config flag for specifying a custom config file path.
-func parseArgs(args []string) (command string, cmdArgs []string, configPath string, err error) {
-	configPath = defaultConfigPath
-	cmdArgs = []string{}
+// parseArgs parses command line arguments and extracts the command, command arguments, config path, and verbose flag.
+// It handles -c/--config flag for specifying a custom config file path and -v/--verbose for verbose mode.
+func parseArgs(args []string) (ParseResult, error) {
+	result := ParseResult{
+		ConfigPath: defaultConfigPath,
+		CmdArgs:    []string{},
+	}
 
 	if len(args) == 0 {
-		return "", nil, "", errors.New("no command specified")
+		return ParseResult{}, errors.New("no command specified")
 	}
 
 	i := 0
@@ -39,20 +43,37 @@ func parseArgs(args []string) (command string, cmdArgs []string, configPath stri
 		arg := args[i]
 		if arg == "-c" || arg == "--config" {
 			if i+1 >= len(args) {
-				return "", nil, "", errors.New("missing value for config flag")
+				return ParseResult{}, errors.New("missing value for config flag")
 			}
-			configPath = args[i+1]
+			result.ConfigPath = args[i+1]
 			i += 2
 			continue
 		}
 		// Check for -c=value or --config=value format
 		if strings.HasPrefix(arg, "-c=") {
-			configPath = strings.TrimPrefix(arg, "-c=")
+			result.ConfigPath = strings.TrimPrefix(arg, "-c=")
 			i++
 			continue
 		}
 		if strings.HasPrefix(arg, "--config=") {
-			configPath = strings.TrimPrefix(arg, "--config=")
+			result.ConfigPath = strings.TrimPrefix(arg, "--config=")
+			i++
+			continue
+		}
+		// Check for verbose flags
+		if arg == "-v" || arg == "--verbose" {
+			result.Verbose = true
+			i++
+			continue
+		}
+		// Check for -v=true/--verbose=true format
+		if strings.HasPrefix(arg, "-v=") {
+			result.Verbose = strings.TrimPrefix(arg, "-v=") == "true"
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--verbose=") {
+			result.Verbose = strings.TrimPrefix(arg, "--verbose=") == "true"
 			i++
 			continue
 		}
@@ -61,18 +82,18 @@ func parseArgs(args []string) (command string, cmdArgs []string, configPath stri
 	}
 
 	if i >= len(args) {
-		return "", nil, "", errors.New("no command specified")
+		return ParseResult{}, errors.New("no command specified")
 	}
 
-	command = args[i]
+	result.Command = args[i]
 	i++
 
 	// Remaining args are command arguments
 	if i < len(args) {
-		cmdArgs = args[i:]
+		result.CmdArgs = args[i:]
 	}
 
-	return command, cmdArgs, configPath, nil
+	return result, nil
 }
 
 func main() {
@@ -86,7 +107,7 @@ func main() {
 	}
 
 	// Parse command-line arguments (skip program name)
-	command, cmdArgs, configPath, err := parseArgs(os.Args[1:])
+	parsed, err := parseArgs(os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		printUsage()
@@ -95,21 +116,21 @@ func main() {
 
 	// Execute the appropriate command
 	var exitCode int
-	switch command {
+	switch parsed.Command {
 	case "config":
-		exitCode = runConfigCommand(configPath)
+		exitCode = runConfigCommand(parsed.ConfigPath, parsed.Verbose)
 	case "add-source":
-		exitCode = runAddSourceCommand(configPath, cmdArgs)
+		exitCode = runAddSourceCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "discover":
-		exitCode = runDiscoverCommand(configPath, cmdArgs)
+		exitCode = runDiscoverCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "run":
-		exitCode = runRunCommand(configPath)
+		exitCode = runRunCommand(parsed.ConfigPath, parsed.Verbose)
 	case "audit":
-		exitCode = runAuditCommand(cmdArgs)
+		exitCode = runAuditCommand(parsed.CmdArgs, parsed.Verbose)
 	case "undo":
-		exitCode = runUndoCommand(cmdArgs)
+		exitCode = runUndoCommand(parsed.CmdArgs, parsed.Verbose)
 	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown command '%s'\n", command)
+		fmt.Fprintf(os.Stderr, "Error: unknown command '%s'\n", parsed.Command)
 		printUsage()
 		exitCode = 1
 	}
@@ -118,26 +139,32 @@ func main() {
 }
 
 // runConfigCommand displays the current configuration.
-func runConfigCommand(configPath string) int {
+// Requirements: 1.2 - verbose flag passed to command
+func runConfigCommand(configPath string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		var configErr *config.ConfigError
 		if errors.As(err, &configErr) {
 			switch configErr.Type {
 			case config.FileNotFound:
-				fmt.Fprintf(os.Stderr, "Error: Configuration file not found: %s\n", configPath)
+				out.Error("Error: Configuration file not found: %s", configPath)
 			case config.InvalidJSON:
-				fmt.Fprintf(os.Stderr, "Error: Invalid JSON in configuration: %s\n", configErr.Message)
+				out.Error("Error: Invalid JSON in configuration: %s", configErr.Message)
 			default:
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				out.Error("Error: %v", err)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			out.Error("Error: %v", err)
 		}
 		return 1
 	}
 
-	displayConfig(cfg)
+	displayConfigWithOutput(cfg, out)
 	return 0
 }
 
@@ -169,11 +196,41 @@ func displayConfig(cfg *config.Configuration) string {
 	return output
 }
 
+// displayConfigWithOutput formats and prints the configuration using the output package.
+func displayConfigWithOutput(cfg *config.Configuration, out *output.Output) {
+	out.Info("Configuration:")
+	out.Info("")
+	out.Info("Source Directories:")
+	if len(cfg.SourceDirectories) == 0 {
+		out.Info("  (none)")
+	} else {
+		for _, dir := range cfg.SourceDirectories {
+			out.Info("  - %s", dir)
+		}
+	}
+
+	out.Info("")
+	out.Info("Prefix Rules:")
+	if len(cfg.PrefixRules) == 0 {
+		out.Info("  (none)")
+	} else {
+		for _, rule := range cfg.PrefixRules {
+			out.Info("  - %s -> %s", rule.Prefix, rule.TargetDirectory)
+		}
+	}
+}
+
 // runAddSourceCommand adds a source directory to the configuration.
-func runAddSourceCommand(configPath string, args []string) int {
+// Requirements: 1.2 - verbose flag passed to command
+func runAddSourceCommand(configPath string, args []string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing directory argument\n")
-		fmt.Fprintf(os.Stderr, "Usage: sorta add-source <directory>\n")
+		out.Error("Error: missing directory argument")
+		out.Error("Usage: sorta add-source <directory>")
 		return 1
 	}
 
@@ -182,31 +239,37 @@ func runAddSourceCommand(configPath string, args []string) int {
 	// Load or create configuration
 	cfg, err := config.LoadOrCreate(configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		out.Error("Error: %v", err)
 		return 1
 	}
 
 	// Try to add the directory
 	if !cfg.AddSourceDirectory(directory) {
-		fmt.Printf("Directory already exists in configuration: %s\n", directory)
+		out.Info("Directory already exists in configuration: %s", directory)
 		return 0
 	}
 
 	// Save the updated configuration
 	if err := config.Save(cfg, configPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+		out.Error("Error saving configuration: %v", err)
 		return 1
 	}
 
-	fmt.Printf("Added source directory: %s\n", directory)
+	out.Info("Added source directory: %s", directory)
 	return 0
 }
 
 // runDiscoverCommand scans a directory for prefix patterns and updates the configuration.
-func runDiscoverCommand(configPath string, args []string) int {
+// Requirements: 3.1, 3.2, 3.3, 5.2 - verbose output and progress indicators
+func runDiscoverCommand(configPath string, args []string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing scan-directory argument\n")
-		fmt.Fprintf(os.Stderr, "Usage: sorta discover <scan-directory>\n")
+		out.Error("Error: missing scan-directory argument")
+		out.Error("Usage: sorta discover <scan-directory>")
 		return 1
 	}
 
@@ -215,14 +278,50 @@ func runDiscoverCommand(configPath string, args []string) int {
 	// Load or create configuration
 	cfg, err := config.LoadOrCreate(configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		out.Error("Error: %v", err)
 		return 1
 	}
 
-	// Run discovery
-	result, err := discovery.Discover(scanDir, cfg)
+	// Track progress for non-verbose mode
+	progressStarted := false
+	fileCount := 0
+
+	// Create discovery callback for verbose output and progress indicator
+	// Requirements: 3.1, 3.2, 3.3, 5.2
+	discoveryCallback := func(event discovery.DiscoveryEvent) {
+		switch event.Type {
+		case discovery.EventTypeDir:
+			// Requirement 3.1: Display each directory being scanned
+			out.Verbose("Scanning directory: %s", event.Path)
+
+			// Start progress on first directory (now we know the total)
+			if !progressStarted && event.Total > 0 {
+				out.StartProgress(event.Total)
+				progressStarted = true
+			}
+
+			// Update progress indicator (only shown in non-verbose TTY mode)
+			out.UpdateProgress(event.Current, "Scanning directory")
+
+		case discovery.EventTypeFile:
+			// Requirement 3.2: Display each file being analyzed
+			out.Verbose("  Analyzing file: %s", event.Path)
+			fileCount++
+
+		case discovery.EventTypePattern:
+			// Requirement 3.3: Display detected patterns as they are found
+			out.Verbose("  Found pattern: %s (in %s)", event.Pattern, event.Path)
+		}
+	}
+
+	// Run discovery with callback
+	result, err := discovery.DiscoverWithCallback(scanDir, cfg, discoveryCallback)
+
+	// End progress indicator before showing results
+	out.EndProgress()
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error during discovery: %v\n", err)
+		out.Error("Error during discovery: %v", err)
 		return 1
 	}
 
@@ -240,10 +339,10 @@ func runDiscoverCommand(configPath string, args []string) int {
 	// Save the updated configuration if there are new rules
 	if len(result.NewRules) > 0 {
 		if err := config.Save(cfg, configPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
+			out.Error("Error saving configuration: %v", err)
 			return 1
 		}
-		fmt.Printf("\nConfiguration saved to: %s\n", configPath)
+		out.Info("Configuration saved to: %s", configPath)
 	}
 
 	return 0
@@ -281,11 +380,17 @@ func displayDiscoveryResult(result *discovery.DiscoveryResult) string {
 }
 
 // runRunCommand executes the file organization workflow.
-func runRunCommand(configPath string) int {
+// Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 5.1 - verbose output and progress indicators
+func runRunCommand(configPath string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
 	// Load configuration to get audit settings
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		out.Error("Error loading config: %v", err)
 		return 1
 	}
 
@@ -297,37 +402,92 @@ func runRunCommand(configPath string) int {
 
 	// Create the audit log directory if it doesn't exist
 	if err := os.MkdirAll(auditConfig.LogDirectory, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating audit directory: %v\n", err)
+		out.Error("Error creating audit directory: %v", err)
 		return 1
 	}
 
+	// Track if progress has been started
+	progressStarted := false
+
+	// Create progress callback for verbose output and progress indicator
+	// Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 5.1
+	progressCallback := func(current, total int, file string, result *orchestrator.Result) {
+		// Start progress on first file (now we know the total)
+		if !progressStarted {
+			out.StartProgress(total)
+			progressStarted = true
+		}
+
+		// Update progress indicator (only shown in non-verbose TTY mode)
+		out.UpdateProgress(current, "Processing file")
+
+		// Verbose output for each file operation
+		if verbose {
+			// Requirement 2.1: Display each file being processed with its source path
+			out.Verbose("Processing: %s", result.SourcePath)
+
+			switch result.EventType {
+			case "MOVE", "DUPLICATE_DETECTED":
+				// Requirement 2.2: Display source and destination paths for moves
+				out.Verbose("  Moved to: %s", result.DestinationPath)
+				if result.IsDuplicate {
+					out.Verbose("  (duplicate renamed from: %s)", result.OriginalName)
+				}
+			case "ROUTE_TO_REVIEW":
+				// Requirement 2.4: Display review routing reason
+				out.Verbose("  Routed to review: %s", result.DestinationPath)
+				if result.ReasonCode != "" {
+					out.Verbose("  Reason: %s", result.ReasonCode)
+				}
+			case "SKIP":
+				// Requirement 2.3: Display skip reason
+				out.Verbose("  Skipped")
+				if result.ReasonCode != "" {
+					out.Verbose("  Reason: %s", result.ReasonCode)
+				}
+			case "ERROR":
+				// Requirement 2.5: Display detailed error information
+				if result.Error != nil {
+					out.Verbose("  Error: %v", result.Error)
+				}
+			}
+		}
+	}
+
 	options := &orchestrator.Options{
-		AuditConfig: &auditConfig,
-		AppVersion:  "1.0.0",
-		MachineID:   getMachineID(),
+		AuditConfig:      &auditConfig,
+		AppVersion:       "1.0.0",
+		MachineID:        getMachineID(),
+		ProgressCallback: progressCallback,
 	}
 
 	// Run the orchestrator with auditing enabled
 	summary, err := orchestrator.RunWithOptions(configPath, options)
+
+	// End progress indicator before showing results
+	out.EndProgress()
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		out.Error("Error: %v", err)
 		return 1
 	}
 
 	// Print scan errors if any
 	for _, scanErr := range summary.ScanErrors {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", scanErr)
+		out.Error("Warning: %v", scanErr)
 	}
 
-	// Print individual file errors
-	for _, result := range summary.Results {
-		if !result.Success {
-			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", result.SourcePath, result.Error)
+	// Print individual file errors (only in non-verbose mode, verbose already showed them)
+	if !verbose {
+		for _, result := range summary.Results {
+			if !result.Success && result.EventType == "ERROR" {
+				out.Error("Error processing %s: %v", result.SourcePath, result.Error)
+			}
 		}
 	}
 
 	// Print summary
-	fmt.Println(summary.PrintSummary())
+	out.Info("%s", summary.PrintSummary())
 
 	// Exit with error code if there were any errors
 	if summary.HasErrors() {
@@ -343,10 +503,15 @@ func getAuditLogDir() string {
 }
 
 // runAuditCommand handles the audit subcommands.
-// Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6
-func runAuditCommand(args []string) int {
+// Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 1.2 - verbose flag passed to command
+func runAuditCommand(args []string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing audit subcommand\n")
+		out.Error("Error: missing audit subcommand")
 		printAuditUsage()
 		return 1
 	}
@@ -356,16 +521,16 @@ func runAuditCommand(args []string) int {
 
 	switch subcommand {
 	case "list":
-		return runAuditListCommand()
+		return runAuditListCommand(out)
 	case "show":
-		return runAuditShowCommand(subArgs)
+		return runAuditShowCommand(subArgs, out)
 	case "export":
-		return runAuditExportCommand(subArgs)
+		return runAuditExportCommand(subArgs, out)
 	case "help", "-h", "--help":
 		printAuditUsage()
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown audit subcommand '%s'\n", subcommand)
+		out.Error("Error: unknown audit subcommand '%s'", subcommand)
 		printAuditUsage()
 		return 1
 	}
@@ -373,26 +538,26 @@ func runAuditCommand(args []string) int {
 
 // runAuditListCommand lists all runs with summary statistics.
 // Requirements: 15.1, 15.3
-func runAuditListCommand() int {
+func runAuditListCommand(out *output.Output) int {
 	logDir := getAuditLogDir()
 	reader := audit.NewAuditReader(logDir)
 
 	runs, err := reader.ListRuns()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading audit log: %v\n", err)
+		out.Error("Error reading audit log: %v", err)
 		return 1
 	}
 
 	if len(runs) == 0 {
-		fmt.Println("No runs found in audit log.")
+		out.Info("No runs found in audit log.")
 		return 0
 	}
 
-	fmt.Println("Audit Trail - Run History")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("%-36s  %-20s  %6s  %6s  %6s  %6s  %-10s\n",
+	out.Info("Audit Trail - Run History")
+	out.Info("%s", strings.Repeat("=", 80))
+	out.Info("%-36s  %-20s  %6s  %6s  %6s  %6s  %-10s",
 		"Run ID", "Timestamp", "Moved", "Skip", "Review", "Errors", "Status")
-	fmt.Println(strings.Repeat("-", 80))
+	out.Info("%s", strings.Repeat("-", 80))
 
 	for _, run := range runs {
 		timestamp := run.StartTime.Format("2006-01-02 15:04:05")
@@ -401,7 +566,7 @@ func runAuditListCommand() int {
 			status = "UNDO"
 		}
 
-		fmt.Printf("%-36s  %-20s  %6d  %6d  %6d  %6d  %-10s\n",
+		out.Info("%-36s  %-20s  %6d  %6d  %6d  %6d  %-10s",
 			run.RunID,
 			timestamp,
 			run.Summary.Moved,
@@ -412,18 +577,18 @@ func runAuditListCommand() int {
 		)
 	}
 
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("Total runs: %d\n", len(runs))
+	out.Info("%s", strings.Repeat("-", 80))
+	out.Info("Total runs: %d", len(runs))
 
 	return 0
 }
 
 // runAuditShowCommand shows detailed events for a specific run.
 // Requirements: 15.2, 15.4, 15.5
-func runAuditShowCommand(args []string) int {
+func runAuditShowCommand(args []string, out *output.Output) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing run-id argument\n")
-		fmt.Fprintf(os.Stderr, "Usage: sorta audit show <run-id> [--type <event-type>]\n")
+		out.Error("Error: missing run-id argument")
+		out.Error("Usage: sorta audit show <run-id> [--type <event-type>]")
 		return 1
 	}
 
@@ -444,7 +609,7 @@ func runAuditShowCommand(args []string) int {
 	// Get run info first
 	runInfo, err := reader.GetRunByID(runID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		out.Error("Error: %v", err)
 		return 1
 	}
 
@@ -460,51 +625,51 @@ func runAuditShowCommand(args []string) int {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading events: %v\n", err)
+		out.Error("Error reading events: %v", err)
 		return 1
 	}
 
 	// Display run header
-	fmt.Println("Audit Trail - Run Details")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("Run ID:     %s\n", runInfo.RunID)
-	fmt.Printf("Type:       %s\n", runInfo.RunType)
-	fmt.Printf("Status:     %s\n", runInfo.Status)
-	fmt.Printf("Started:    %s\n", runInfo.StartTime.Format("2006-01-02 15:04:05"))
+	out.Info("Audit Trail - Run Details")
+	out.Info("%s", strings.Repeat("=", 80))
+	out.Info("Run ID:     %s", runInfo.RunID)
+	out.Info("Type:       %s", runInfo.RunType)
+	out.Info("Status:     %s", runInfo.Status)
+	out.Info("Started:    %s", runInfo.StartTime.Format("2006-01-02 15:04:05"))
 	if runInfo.EndTime != nil {
-		fmt.Printf("Ended:      %s\n", runInfo.EndTime.Format("2006-01-02 15:04:05"))
+		out.Info("Ended:      %s", runInfo.EndTime.Format("2006-01-02 15:04:05"))
 	}
 	if runInfo.UndoTargetID != nil {
-		fmt.Printf("Undo of:    %s\n", *runInfo.UndoTargetID)
+		out.Info("Undo of:    %s", *runInfo.UndoTargetID)
 	}
-	fmt.Printf("App Ver:    %s\n", runInfo.AppVersion)
-	fmt.Printf("Machine:    %s\n", runInfo.MachineID)
-	fmt.Println()
+	out.Info("App Ver:    %s", runInfo.AppVersion)
+	out.Info("Machine:    %s", runInfo.MachineID)
+	out.Info("")
 
 	// Display summary
-	fmt.Println("Summary:")
-	fmt.Printf("  Total Files: %d\n", runInfo.Summary.TotalFiles)
-	fmt.Printf("  Moved:       %d\n", runInfo.Summary.Moved)
-	fmt.Printf("  Skipped:     %d\n", runInfo.Summary.Skipped)
-	fmt.Printf("  Review:      %d\n", runInfo.Summary.RoutedReview)
-	fmt.Printf("  Duplicates:  %d\n", runInfo.Summary.Duplicates)
-	fmt.Printf("  Errors:      %d\n", runInfo.Summary.Errors)
-	fmt.Println()
+	out.Info("Summary:")
+	out.Info("  Total Files: %d", runInfo.Summary.TotalFiles)
+	out.Info("  Moved:       %d", runInfo.Summary.Moved)
+	out.Info("  Skipped:     %d", runInfo.Summary.Skipped)
+	out.Info("  Review:      %d", runInfo.Summary.RoutedReview)
+	out.Info("  Duplicates:  %d", runInfo.Summary.Duplicates)
+	out.Info("  Errors:      %d", runInfo.Summary.Errors)
+	out.Info("")
 
 	// Display events
 	if filterType != "" {
-		fmt.Printf("Events (filtered by type: %s):\n", filterType)
+		out.Info("Events (filtered by type: %s):", filterType)
 	} else {
-		fmt.Println("Events:")
+		out.Info("Events:")
 	}
-	fmt.Println(strings.Repeat("-", 80))
+	out.Info("%s", strings.Repeat("-", 80))
 
 	for _, event := range events {
-		displayEvent(event)
+		displayEventWithOutput(event, out)
 	}
 
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("Total events shown: %d\n", len(events))
+	out.Info("%s", strings.Repeat("-", 80))
+	out.Info("Total events shown: %d", len(events))
 
 	return 0
 }
@@ -532,12 +697,35 @@ func displayEvent(event audit.AuditEvent) {
 	fmt.Println()
 }
 
+// displayEventWithOutput formats and prints a single audit event using the output package.
+func displayEventWithOutput(event audit.AuditEvent, out *output.Output) {
+	timestamp := event.Timestamp.Format("15:04:05")
+	out.Info("[%s] %-20s %s", timestamp, event.EventType, event.Status)
+
+	if event.SourcePath != "" {
+		out.Info("         Source: %s", event.SourcePath)
+	}
+	if event.DestinationPath != "" {
+		out.Info("         Dest:   %s", event.DestinationPath)
+	}
+	if event.ReasonCode != "" {
+		out.Info("         Reason: %s", event.ReasonCode)
+	}
+	if event.ErrorDetails != nil {
+		out.Info("         Error:  [%s] %s", event.ErrorDetails.ErrorType, event.ErrorDetails.ErrorMessage)
+	}
+	if event.FileIdentity != nil {
+		out.Info("         Hash:   %s (size: %d)", event.FileIdentity.ContentHash[:16]+"...", event.FileIdentity.Size)
+	}
+	out.Info("")
+}
+
 // runAuditExportCommand exports run audit data to a file.
 // Requirements: 15.6
-func runAuditExportCommand(args []string) int {
+func runAuditExportCommand(args []string, out *output.Output) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: missing run-id argument\n")
-		fmt.Fprintf(os.Stderr, "Usage: sorta audit export <run-id> [output-file]\n")
+		out.Error("Error: missing run-id argument")
+		out.Error("Usage: sorta audit export <run-id> [output-file]")
 		return 1
 	}
 
@@ -556,14 +744,14 @@ func runAuditExportCommand(args []string) int {
 	// Get run info
 	runInfo, err := reader.GetRunByID(runID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		out.Error("Error: %v", err)
 		return 1
 	}
 
 	// Get all events for the run
 	events, err := reader.GetRun(runID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading events: %v\n", err)
+		out.Error("Error reading events: %v", err)
 		return 1
 	}
 
@@ -579,25 +767,30 @@ func runAuditExportCommand(args []string) int {
 	// Marshal to JSON
 	data, err := json.MarshalIndent(export, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling export data: %v\n", err)
+		out.Error("Error marshaling export data: %v", err)
 		return 1
 	}
 
 	// Write to file
 	if err := os.WriteFile(outputFile, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing export file: %v\n", err)
+		out.Error("Error writing export file: %v", err)
 		return 1
 	}
 
-	fmt.Printf("Exported run %s to %s\n", runID, outputFile)
-	fmt.Printf("  Events: %d\n", len(events))
+	out.Info("Exported run %s to %s", runID, outputFile)
+	out.Info("  Events: %d", len(events))
 
 	return 0
 }
 
 // runUndoCommand handles the undo command.
-// Requirements: 5.1, 6.1, 7.2
-func runUndoCommand(args []string) int {
+// Requirements: 4.1, 4.2, 4.3, 5.1, 5.3, 6.1, 7.2
+func runUndoCommand(args []string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
 	var runID string
 	var preview bool
 	var pathMappings []audit.PathMapping
@@ -612,14 +805,14 @@ func runUndoCommand(args []string) int {
 			i++
 			mapping, err := parsePathMapping(args[i])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing path mapping: %v\n", err)
+				out.Error("Error parsing path mapping: %v", err)
 				return 1
 			}
 			pathMappings = append(pathMappings, mapping)
 		case !strings.HasPrefix(arg, "-"):
 			runID = arg
 		default:
-			fmt.Fprintf(os.Stderr, "Error: unknown flag '%s'\n", arg)
+			out.Error("Error: unknown flag '%s'", arg)
 			printUndoUsage()
 			return 1
 		}
@@ -638,13 +831,64 @@ func runUndoCommand(args []string) int {
 	auditConfig.LogDirectory = logDir
 	writer, err := audit.NewAuditWriter(auditConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing audit writer: %v\n", err)
+		out.Error("Error initializing audit writer: %v", err)
 		return 1
 	}
 	defer writer.Close()
 
 	// Create undo engine
 	engine := audit.NewUndoEngine(reader, writer, "1.0.0", getMachineID())
+
+	// Track if progress has been started
+	progressStarted := false
+
+	// Set up callback for verbose output and progress indicator
+	// Requirements: 4.1, 4.2, 4.3, 5.3
+	undoCallback := func(event audit.UndoProgressEvent) {
+		// Start progress on first event (now we know the total)
+		if !progressStarted && event.Total > 0 {
+			out.StartProgress(event.Total)
+			progressStarted = true
+		}
+
+		// Update progress indicator (only shown in non-verbose TTY mode)
+		out.UpdateProgress(event.Current, "Restoring file")
+
+		// Verbose output for each undo operation
+		switch event.Type {
+		case "restore":
+			// Requirement 4.1: Display each file being restored with source and destination
+			out.Verbose("Restoring: %s", event.SourcePath)
+			out.Verbose("  From: %s", event.DestPath)
+			out.Verbose("  To: %s", event.SourcePath)
+		case "skip":
+			// Requirement 4.2: Display skip reasons for files that cannot be restored
+			out.Verbose("Skipping: %s", event.SourcePath)
+			if event.Reason != "" {
+				out.Verbose("  Reason: %s", event.Reason)
+			}
+		case "verify":
+			// Requirement 4.3: Display verification status for file identity checks
+			if event.VerifyStatus == "match" {
+				out.Verbose("Verified: %s (identity match)", event.DestPath)
+			} else {
+				out.Verbose("Verification failed: %s", event.DestPath)
+				out.Verbose("  Status: %s", event.VerifyStatus)
+				if event.Reason != "" {
+					out.Verbose("  Reason: %s", event.Reason)
+				}
+			}
+		case "error":
+			// Display error information
+			out.Verbose("Error: %s", event.SourcePath)
+			if event.Reason != "" {
+				out.Verbose("  Reason: %s", event.Reason)
+			}
+		}
+	}
+
+	// Set the callback on the engine
+	engine.SetCallback(undoCallback)
 
 	var result *audit.UndoResult
 	if runID == "" {
@@ -655,25 +899,28 @@ func runUndoCommand(args []string) int {
 		result, err = engine.UndoRun(audit.RunID(runID), pathMappings)
 	}
 
+	// End progress indicator before showing results
+	out.EndProgress()
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error during undo: %v\n", err)
+		out.Error("Error during undo: %v", err)
 		return 1
 	}
 
 	// Display results
-	fmt.Println("Undo Operation Complete")
-	fmt.Println(strings.Repeat("=", 50))
-	fmt.Printf("Undo Run ID:    %s\n", result.UndoRunID)
-	fmt.Printf("Target Run ID:  %s\n", result.TargetRunID)
-	fmt.Printf("Total Events:   %d\n", result.TotalEvents)
-	fmt.Printf("Restored:       %d\n", result.Restored)
-	fmt.Printf("Skipped:        %d\n", result.Skipped)
-	fmt.Printf("Failed:         %d\n", result.Failed)
+	out.Info("Undo Operation Complete")
+	out.Info("%s", strings.Repeat("=", 50))
+	out.Info("Undo Run ID:    %s", result.UndoRunID)
+	out.Info("Target Run ID:  %s", result.TargetRunID)
+	out.Info("Total Events:   %d", result.TotalEvents)
+	out.Info("Restored:       %d", result.Restored)
+	out.Info("Skipped:        %d", result.Skipped)
+	out.Info("Failed:         %d", result.Failed)
 
 	if len(result.FailureDetails) > 0 {
-		fmt.Println("\nFailure Details:")
+		out.Info("\nFailure Details:")
 		for _, failure := range result.FailureDetails {
-			fmt.Printf("  - %s: %s (%s)\n", failure.SourcePath, failure.Message, failure.Reason)
+			out.Info("  - %s: %s (%s)", failure.SourcePath, failure.Message, failure.Reason)
 		}
 	}
 
@@ -819,6 +1066,7 @@ Commands:
 
 Flags:
   -c, --config <path>   Config file path (default: sorta-config.json)
+  -v, --verbose         Enable verbose output for detailed operation information
   -h, --help            Show this help message
 
 Audit Subcommands:
@@ -835,6 +1083,7 @@ Examples:
   sorta add-source /path/to/source      Add a source directory
   sorta discover /path/to/organized     Discover prefix rules from existing files
   sorta run                             Organize files according to configuration
+  sorta -v run                          Run with verbose output
   sorta audit list                      List all audit runs
   sorta audit show <run-id>             Show details for a specific run
   sorta undo                            Undo most recent run

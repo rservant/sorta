@@ -23,6 +23,30 @@ type DiscoveryResult struct {
 	FilesAnalyzed int              // Number of files analyzed
 }
 
+// DiscoveryEventType represents the type of discovery event.
+type DiscoveryEventType string
+
+const (
+	// EventTypeDir indicates a directory is being scanned.
+	EventTypeDir DiscoveryEventType = "dir"
+	// EventTypeFile indicates a file is being analyzed.
+	EventTypeFile DiscoveryEventType = "file"
+	// EventTypePattern indicates a pattern was found.
+	EventTypePattern DiscoveryEventType = "pattern"
+)
+
+// DiscoveryEvent represents a discovery progress event.
+type DiscoveryEvent struct {
+	Type    DiscoveryEventType // "dir", "file", "pattern"
+	Path    string             // Path being processed
+	Pattern string             // Only for "pattern" type - the detected pattern
+	Current int                // Current progress count
+	Total   int                // Total items (if known, 0 otherwise)
+}
+
+// DiscoveryCallback is called during discovery operations.
+type DiscoveryCallback func(event DiscoveryEvent)
+
 // scanTargetCandidates finds immediate subdirectories of the scan directory.
 // Returns only immediate child directories, not nested ones.
 func scanTargetCandidates(scanDir string) ([]string, error) {
@@ -44,6 +68,13 @@ func scanTargetCandidates(scanDir string) ([]string, error) {
 // analyzeDirectory recursively scans all files within a directory
 // and returns unique prefixes found using pattern detection.
 func analyzeDirectory(dir string) ([]string, error) {
+	return analyzeDirectoryWithCallback(dir, nil, nil)
+}
+
+// analyzeDirectoryWithCallback recursively scans all files within a directory
+// and returns unique prefixes found using pattern detection.
+// It calls the callback for each file analyzed and pattern found.
+func analyzeDirectoryWithCallback(dir string, callback DiscoveryCallback, fileCounter *int) ([]string, error) {
 	prefixSet := make(map[string]bool)
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -56,14 +87,35 @@ func analyzeDirectory(dir string) ([]string, error) {
 			return nil
 		}
 
+		// Call callback for file being analyzed
+		if callback != nil && fileCounter != nil {
+			*fileCounter++
+			callback(DiscoveryEvent{
+				Type:    EventTypeFile,
+				Path:    path,
+				Current: *fileCounter,
+			})
+		}
+
 		// Extract prefix from filename
 		prefix, matched := ExtractPrefixFromFilename(info.Name())
 		if matched {
-			// Store prefix in lowercase for case-insensitive uniqueness
-			prefixSet[strings.ToLower(prefix)] = true
-			// But we want to preserve the original case, so store it again
-			// Actually, let's store the original prefix
-			prefixSet[prefix] = true
+			// Check if this is a new prefix (case-insensitive)
+			lowerPrefix := strings.ToLower(prefix)
+			if !prefixSet[lowerPrefix] {
+				prefixSet[lowerPrefix] = true
+				// Store the original case version
+				prefixSet[prefix] = true
+
+				// Call callback for pattern found
+				if callback != nil {
+					callback(DiscoveryEvent{
+						Type:    EventTypePattern,
+						Path:    path,
+						Pattern: prefix,
+					})
+				}
+			}
 		}
 
 		return nil
@@ -87,6 +139,15 @@ func analyzeDirectory(dir string) ([]string, error) {
 // and generates prefix rules for any patterns found.
 // Existing prefixes in the configuration are skipped.
 func Discover(scanDir string, existingConfig *config.Configuration) (*DiscoveryResult, error) {
+	return DiscoverWithCallback(scanDir, existingConfig, nil)
+}
+
+// DiscoverWithCallback scans a directory and returns discovered prefix rules with progress reporting.
+// It examines immediate subdirectories of scanDir, analyzes files within each,
+// and generates prefix rules for any patterns found.
+// Existing prefixes in the configuration are skipped.
+// The callback is called for each directory scanned, file analyzed, and pattern found.
+func DiscoverWithCallback(scanDir string, existingConfig *config.Configuration, callback DiscoveryCallback) (*DiscoveryResult, error) {
 	result := &DiscoveryResult{
 		NewRules:     []DiscoveredRule{},
 		SkippedRules: []DiscoveredRule{},
@@ -102,11 +163,24 @@ func Discover(scanDir string, existingConfig *config.Configuration) (*DiscoveryR
 	// to avoid duplicates within the same scan
 	seenPrefixes := make(map[string]bool)
 
-	for _, candidateDir := range candidates {
+	// Track file count for progress reporting
+	fileCounter := 0
+
+	for i, candidateDir := range candidates {
 		result.ScannedDirs++
 
-		// Analyze the directory for prefixes
-		prefixes, err := analyzeDirectory(candidateDir)
+		// Call callback for directory being scanned
+		if callback != nil {
+			callback(DiscoveryEvent{
+				Type:    EventTypeDir,
+				Path:    candidateDir,
+				Current: i + 1,
+				Total:   len(candidates),
+			})
+		}
+
+		// Analyze the directory for prefixes with callback support
+		prefixes, err := analyzeDirectoryWithCallback(candidateDir, callback, &fileCounter)
 		if err != nil {
 			// Log warning but continue with other directories
 			continue
