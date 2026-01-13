@@ -355,22 +355,17 @@ func toggleCase(s string) string {
 	return string(first) + s[1:]
 }
 
-// Feature: discovery-directory-filtering, Property 2: ISO-Date Directory Filtering
-// Validates: Requirements 2.1, 2.2, 3.1, 3.2, 3.3
+// Feature: discovery-directory-filtering, Property 2: ISO-Date Directory Scanning
+// ISO-date directories ARE now scanned for prefix extraction.
 
-func TestISODateDirectoryFiltering(t *testing.T) {
+func TestISODateDirectoryScanning(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 100
 
 	properties := gopter.NewProperties(parameters)
 
-	// Property 2: ISO-Date Directory Filtering
-	// For any directory structure containing subdirectories that start with ISO dates (YYYY-MM-DD),
-	// files within those ISO-date subdirectories SHALL NOT be analyzed for prefix extraction.
-	// Files in non-ISO-date subdirectories SHALL be analyzed normally.
-
-	// Property: Files in ISO-date subdirectories are NOT analyzed
-	properties.Property("Files in ISO-date subdirectories are skipped", prop.ForAll(
+	// Property: Files in ISO-date subdirectories ARE analyzed (directories are scanned)
+	properties.Property("Files in ISO-date subdirectories are analyzed", prop.ForAll(
 		func(prefix string, date string, isoDateDir string) bool {
 			// Create temp directory structure
 			baseDir, err := os.MkdirTemp("", "sorta-isofilter-*")
@@ -402,12 +397,18 @@ func TestISODateDirectoryFiltering(t *testing.T) {
 				return false
 			}
 
-			// The prefix should NOT be found because the file is in an ISO-date directory
+			// The prefix SHOULD be found because ISO-date directories are now scanned
+			found := false
 			for _, p := range prefixes {
 				if p == prefix {
-					t.Logf("Prefix %q was found but should have been skipped (in ISO-date dir %q)", prefix, isoDateDir)
-					return false
+					found = true
+					break
 				}
+			}
+
+			if !found {
+				t.Logf("Prefix %q was not found but should have been (in ISO-date dir %q)", prefix, isoDateDir)
+				return false
 			}
 
 			return true
@@ -546,10 +547,9 @@ func genNonISODateDirNameForTest() gopter.Gen {
 	})
 }
 
-// TestDirectoryFilteringBehavior tests specific examples of directory filtering.
-// Validates: Requirements 2.1, 2.2, 3.1, 3.2, 3.3
+// TestDirectoryFilteringBehavior tests specific examples of directory scanning behavior.
 func TestDirectoryFilteringBehavior(t *testing.T) {
-	t.Run("files in ISO-date subdirectories are skipped", func(t *testing.T) {
+	t.Run("files in ISO-date subdirectories are analyzed", func(t *testing.T) {
 		// Create temp directory structure
 		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
 		if err != nil {
@@ -575,11 +575,16 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 			t.Fatalf("analyzeDirectory failed: %v", err)
 		}
 
-		// The prefix should NOT be found
+		// The prefix SHOULD be found (ISO-date directories are now scanned)
+		found := false
 		for _, p := range prefixes {
 			if p == "Invoice" {
-				t.Errorf("Prefix 'Invoice' was found but should have been skipped")
+				found = true
+				break
 			}
+		}
+		if !found {
+			t.Errorf("Prefix 'Invoice' was not found but should have been")
 		}
 	})
 
@@ -634,8 +639,8 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 		// baseDir/
 		//   invoices/                    <- non-ISO, should be scanned
 		//     Invoice 2024-01-15 A.pdf   <- should be found
-		//     2024-02-01 Archive/        <- ISO, should be skipped
-		//       Invoice 2024-02-01 B.pdf <- should NOT be found
+		//     2024-02-01 Archive/        <- ISO, now also scanned
+		//       Receipt 2024-02-01 B.pdf <- should be found (ISO dirs are now scanned)
 
 		invoicesDir := filepath.Join(baseDir, "invoices")
 		if err := os.MkdirAll(invoicesDir, 0755); err != nil {
@@ -648,13 +653,13 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 			t.Fatalf("Failed to create file: %v", err)
 		}
 
-		// ISO-date subdirectory inside invoices
+		// ISO-date subdirectory inside invoices (now scanned)
 		archiveDir := filepath.Join(invoicesDir, "2024-02-01 Archive")
 		if err := os.MkdirAll(archiveDir, 0755); err != nil {
 			t.Fatalf("Failed to create archive dir: %v", err)
 		}
 
-		// File in ISO-date directory (should NOT be found)
+		// File in ISO-date directory (should now be found)
 		filePath2 := filepath.Join(archiveDir, "Receipt 2024-02-01 B.pdf")
 		if err := os.WriteFile(filePath2, []byte("test"), 0644); err != nil {
 			t.Fatalf("Failed to create file: %v", err)
@@ -666,7 +671,7 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 			t.Fatalf("analyzeDirectory failed: %v", err)
 		}
 
-		// Invoice should be found (from non-ISO dir)
+		// Both Invoice and Receipt should be found
 		foundInvoice := false
 		foundReceipt := false
 		for _, p := range prefixes {
@@ -679,14 +684,14 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 		}
 
 		if !foundInvoice {
-			t.Errorf("Prefix 'Invoice' was not found but should have been (in non-ISO dir)")
+			t.Errorf("Prefix 'Invoice' was not found but should have been")
 		}
-		if foundReceipt {
-			t.Errorf("Prefix 'Receipt' was found but should have been skipped (in ISO-date dir)")
+		if !foundReceipt {
+			t.Errorf("Prefix 'Receipt' was not found but should have been (ISO-date dirs are now scanned)")
 		}
 	})
 
-	t.Run("deeply nested ISO-date directories are skipped", func(t *testing.T) {
+	t.Run("deeply nested ISO-date directories are scanned", func(t *testing.T) {
 		// Create temp directory structure
 		baseDir, err := os.MkdirTemp("", "sorta-filter-*")
 		if err != nil {
@@ -698,8 +703,8 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 		// baseDir/
 		//   level1/
 		//     level2/
-		//       2024-03-15 Deep Archive/  <- ISO, should be skipped
-		//         Statement 2024-03-15 X.pdf <- should NOT be found
+		//       2024-03-15 Deep Archive/  <- ISO, now scanned
+		//         Statement 2024-03-15 X.pdf <- should be found
 
 		deepDir := filepath.Join(baseDir, "level1", "level2", "2024-03-15 Deep Archive")
 		if err := os.MkdirAll(deepDir, 0755); err != nil {
@@ -717,11 +722,16 @@ func TestDirectoryFilteringBehavior(t *testing.T) {
 			t.Fatalf("analyzeDirectory failed: %v", err)
 		}
 
-		// Statement should NOT be found
+		// Statement SHOULD be found (ISO-date directories are now scanned)
+		found := false
 		for _, p := range prefixes {
 			if p == "Statement" {
-				t.Errorf("Prefix 'Statement' was found but should have been skipped (in nested ISO-date dir)")
+				found = true
+				break
 			}
+		}
+		if !found {
+			t.Errorf("Prefix 'Statement' was not found but should have been (ISO-date dirs are now scanned)")
 		}
 	})
 
