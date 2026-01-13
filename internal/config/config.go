@@ -45,11 +45,36 @@ type PrefixRule struct {
 	OutboundDirectory string `json:"outboundDirectory"`
 }
 
+// Symlink policy constants
+const (
+	SymlinkPolicyFollow = "follow"
+	SymlinkPolicySkip   = "skip"
+	SymlinkPolicyError  = "error"
+)
+
 // Configuration holds all settings for Sorta.
 type Configuration struct {
 	InboundDirectories []string           `json:"inboundDirectories"`
 	PrefixRules        []PrefixRule       `json:"prefixRules"`
 	Audit              *audit.AuditConfig `json:"audit,omitempty"`
+	SymlinkPolicy      string             `json:"symlinkPolicy,omitempty"`
+	ScanDepth          *int               `json:"scanDepth,omitempty"` // nil = default (0)
+}
+
+// GetSymlinkPolicy returns the configured symlink policy or default "skip".
+func (c *Configuration) GetSymlinkPolicy() string {
+	if c.SymlinkPolicy == "" {
+		return SymlinkPolicySkip
+	}
+	return c.SymlinkPolicy
+}
+
+// GetScanDepth returns the configured scan depth or default 0.
+func (c *Configuration) GetScanDepth() int {
+	if c.ScanDepth == nil {
+		return 0
+	}
+	return *c.ScanDepth
 }
 
 // Validate checks that the configuration has all required fields.

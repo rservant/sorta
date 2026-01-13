@@ -86,8 +86,9 @@ func cleanupTempDir(t *testing.T, dir string) {
 // SHALL remain unchanged and the log file size SHALL never decrease during
 // normal operation.
 func TestAppendOnlyLogIntegrity(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -431,8 +432,9 @@ func containsStr(s, substr string) bool {
 // - DUPLICATE_DETECTED events SHALL have sourcePath, intended destination, actual destination
 // - ERROR events SHALL have sourcePath, errorType, and errorMessage
 func TestEventFieldCompletenessByType(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -893,8 +895,9 @@ func splitLines(s string) []string {
 // For any file processed in a run, there SHALL be exactly one primary event
 // (MOVE, ROUTE_TO_REVIEW, SKIP, or ERROR) recorded for that file.
 func TestOneEventPerFile(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 

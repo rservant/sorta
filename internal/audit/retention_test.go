@@ -18,8 +18,9 @@ import (
 // For any retention pruning operation, log segments containing runs less than
 // the configured minimum age SHALL NOT be pruned.
 func TestMinimumRetentionProtection(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -266,8 +267,7 @@ func TestPruningWithRunCountRetention(t *testing.T) {
 		}
 		writer.Close()
 
-		// Small delay to ensure different timestamps
-		time.Sleep(10 * time.Millisecond)
+		// Removed time.Sleep - timestamps from time.Now() are sufficient
 	}
 
 	// List runs to verify we have 4

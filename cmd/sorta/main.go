@@ -23,6 +23,8 @@ type ParseResult struct {
 	CmdArgs    []string
 	ConfigPath string
 	Verbose    bool
+	Validate   bool // For config --validate
+	Depth      int  // For run --depth N (-1 means not set)
 }
 
 // parseArgs parses command line arguments and extracts the command, command arguments, config path, and verbose flag.
@@ -31,6 +33,7 @@ func parseArgs(args []string) (ParseResult, error) {
 	result := ParseResult{
 		ConfigPath: defaultConfigPath,
 		CmdArgs:    []string{},
+		Depth:      -1, // -1 means not set
 	}
 
 	if len(args) == 0 {
@@ -88,9 +91,77 @@ func parseArgs(args []string) (ParseResult, error) {
 	result.Command = args[i]
 	i++
 
-	// Remaining args are command arguments
-	if i < len(args) {
-		result.CmdArgs = args[i:]
+	// Parse command-specific flags
+	for i < len(args) {
+		arg := args[i]
+
+		// --validate flag for config command
+		if arg == "--validate" {
+			result.Validate = true
+			i++
+			continue
+		}
+
+		// --depth flag for run command
+		if arg == "--depth" {
+			if i+1 >= len(args) {
+				return ParseResult{}, errors.New("missing value for depth flag")
+			}
+			depth, err := parseDepth(args[i+1])
+			if err != nil {
+				return ParseResult{}, err
+			}
+			result.Depth = depth
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(arg, "--depth=") {
+			depthStr := strings.TrimPrefix(arg, "--depth=")
+			depth, err := parseDepth(depthStr)
+			if err != nil {
+				return ParseResult{}, err
+			}
+			result.Depth = depth
+			i++
+			continue
+		}
+
+		// Not a recognized flag, add to command args
+		result.CmdArgs = append(result.CmdArgs, arg)
+		i++
+	}
+
+	return result, nil
+}
+
+// parseDepth parses a depth string into an integer.
+func parseDepth(s string) (int, error) {
+	if s == "" {
+		return 0, errors.New("depth value cannot be empty")
+	}
+
+	// Simple integer parsing without strconv
+	negative := false
+	start := 0
+	if s[0] == '-' {
+		negative = true
+		start = 1
+	}
+
+	if start >= len(s) {
+		return 0, errors.New("invalid depth value")
+	}
+
+	result := 0
+	for i := start; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, errors.New("depth must be a non-negative integer")
+		}
+		result = result*10 + int(s[i]-'0')
+	}
+
+	if negative {
+		return 0, errors.New("depth must be a non-negative integer")
 	}
 
 	return result, nil
@@ -118,13 +189,13 @@ func main() {
 	var exitCode int
 	switch parsed.Command {
 	case "config":
-		exitCode = runConfigCommand(parsed.ConfigPath, parsed.Verbose)
+		exitCode = runConfigCommand(parsed.ConfigPath, parsed.Verbose, parsed.Validate)
 	case "add-inbound":
 		exitCode = runAddInboundCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "discover":
 		exitCode = runDiscoverCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "run":
-		exitCode = runRunCommand(parsed.ConfigPath, parsed.Verbose)
+		exitCode = runRunCommand(parsed.ConfigPath, parsed.Verbose, parsed.Depth)
 	case "audit":
 		exitCode = runAuditCommand(parsed.CmdArgs, parsed.Verbose)
 	case "undo":
@@ -138,9 +209,9 @@ func main() {
 	os.Exit(exitCode)
 }
 
-// runConfigCommand displays the current configuration.
-// Requirements: 1.2 - verbose flag passed to command
-func runConfigCommand(configPath string, verbose bool) int {
+// runConfigCommand displays the current configuration or validates it.
+// Requirements: 1.1, 1.2, 1.6, 1.7, 1.8 - verbose flag passed to command, validation support
+func runConfigCommand(configPath string, verbose bool, validate bool) int {
 	// Create output instance with verbose config
 	outConfig := output.DefaultConfig()
 	outConfig.Verbose = verbose
@@ -164,8 +235,50 @@ func runConfigCommand(configPath string, verbose bool) int {
 		return 1
 	}
 
+	// If --validate flag is set, run validation
+	if validate {
+		return runValidation(cfg, out)
+	}
+
 	displayConfigWithOutput(cfg, out)
 	return 0
+}
+
+// runValidation validates the configuration and displays results.
+// Requirements: 1.1, 1.6, 1.7, 1.8
+func runValidation(cfg *config.Configuration, out *output.Output) int {
+	result := config.ValidateConfig(cfg)
+
+	if result.Valid {
+		out.Info("Configuration validation passed!")
+		if len(result.Warnings) > 0 {
+			out.Info("")
+			out.Info("Warnings:")
+			for _, warning := range result.Warnings {
+				out.Info("  [%s] %s", warning.Field, warning.Message)
+			}
+		}
+		return 0
+	}
+
+	// Display all errors
+	out.Error("Configuration validation failed!")
+	out.Error("")
+	out.Error("Errors:")
+	for _, err := range result.Errors {
+		out.Error("  [%s] %s", err.Field, err.Message)
+	}
+
+	// Display warnings if any
+	if len(result.Warnings) > 0 {
+		out.Error("")
+		out.Error("Warnings:")
+		for _, warning := range result.Warnings {
+			out.Error("  [%s] %s", warning.Field, warning.Message)
+		}
+	}
+
+	return 1
 }
 
 // displayConfig formats and prints the configuration to stdout.
@@ -380,8 +493,8 @@ func displayDiscoveryResult(result *discovery.DiscoveryResult) string {
 }
 
 // runRunCommand executes the file organization workflow.
-// Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 5.1 - verbose output and progress indicators
-func runRunCommand(configPath string, verbose bool) int {
+// Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.5, 4.1, 4.2, 4.3, 4.4, 5.1 - verbose output, progress indicators, depth override, runtime validation
+func runRunCommand(configPath string, verbose bool, depthOverride int) int {
 	// Create output instance with verbose config
 	outConfig := output.DefaultConfig()
 	outConfig.Verbose = verbose
@@ -459,6 +572,25 @@ func runRunCommand(configPath string, verbose bool) int {
 		AppVersion:       "1.0.0",
 		MachineID:        getMachineID(),
 		ProgressCallback: progressCallback,
+	}
+
+	// Apply depth override if specified via --depth flag
+	// Requirements: 3.5 - --depth N overrides configured scanDepth
+	if depthOverride >= 0 {
+		options.ScanDepth = &depthOverride
+	}
+
+	// Verbose output for validated directories
+	// Requirements: 4.4 - report which directories were validated in verbose mode
+	if verbose {
+		out.Verbose("Validating inbound directories...")
+		for _, dir := range cfg.InboundDirectories {
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				out.Verbose("  [MISSING] %s", dir)
+			} else {
+				out.Verbose("  [OK] %s", dir)
+			}
+		}
 	}
 
 	// Run the orchestrator with auditing enabled
@@ -1069,6 +1201,12 @@ Flags:
   -v, --verbose         Enable verbose output for detailed operation information
   -h, --help            Show this help message
 
+Config Options:
+  --validate            Validate configuration and report errors
+
+Run Options:
+  --depth N             Override scan depth (0 = immediate directory only)
+
 Audit Subcommands:
   audit list            List all runs with summary statistics
   audit show <run-id>   Show detailed events for a specific run
@@ -1080,9 +1218,11 @@ Undo Options:
 
 Examples:
   sorta config                          Show current configuration
+  sorta config --validate               Validate configuration
   sorta add-inbound /path/to/inbound    Add an inbound directory
   sorta discover /path/to/organized     Discover prefix rules from existing files
   sorta run                             Organize files according to configuration
+  sorta run --depth 2                   Run with scan depth of 2 levels
   sorta -v run                          Run with verbose output
   sorta audit list                      List all audit runs
   sorta audit show <run-id>             Show details for a specific run
@@ -1095,7 +1235,9 @@ Config file format (JSON):
     "inboundDirectories": ["/path/to/inbound"],
     "prefixRules": [
       { "prefix": "Invoice", "outboundDirectory": "/path/to/invoices" }
-    ]
+    ],
+    "symlinkPolicy": "skip",
+    "scanDepth": 0
   }
 
 Files matching "<prefix> <YYYY-MM-DD> <description>" are moved to:

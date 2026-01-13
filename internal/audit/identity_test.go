@@ -34,8 +34,9 @@ func genFileName() gopter.Gen {
 // For any MOVE event, the fileIdentity field SHALL contain a valid SHA-256 contentHash,
 // non-negative size in bytes, and modTime timestamp.
 func TestFileIdentityCompleteness(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 

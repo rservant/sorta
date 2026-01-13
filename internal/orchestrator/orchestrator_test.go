@@ -518,3 +518,282 @@ func TestFailFastOnAuditWriteFailure_ErrorReporting(t *testing.T) {
 		t.Error("Source file should not have been moved")
 	}
 }
+
+// Feature: config-validation, Property 7: Runtime Path Validation
+// Validates: Requirements 4.1, 4.2
+//
+// For any run operation, Sorta SHALL validate that inbound directories exist before processing.
+// Non-existent directories SHALL be skipped with an error message, and remaining directories
+// SHALL still be processed.
+
+// TestRuntimePathValidation tests Property 7: Runtime Path Validation
+// This property verifies that:
+// 1. Non-existent inbound directories are skipped with an error
+// 2. Remaining valid directories are still processed
+// 3. Files from valid directories are organized correctly
+func TestRuntimePathValidation(t *testing.T) {
+	parameters := gopter.DefaultTestParameters()
+	parameters.MinSuccessfulTests = 100
+
+	properties := gopter.NewProperties(parameters)
+
+	properties.Property("Non-existent inbound directories are skipped, valid ones are processed", prop.ForAll(
+		func(numExisting int, numMissing int) bool {
+			if numExisting == 0 && numMissing == 0 {
+				return true // Skip empty case
+			}
+
+			// Create temp directories
+			tempDir, err := os.MkdirTemp("", "runtime-path-validation-*")
+			if err != nil {
+				t.Logf("Failed to create temp dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(tempDir)
+
+			targetDir := filepath.Join(tempDir, "target")
+			auditDir := filepath.Join(tempDir, "audit")
+
+			if err := os.MkdirAll(targetDir, 0755); err != nil {
+				t.Logf("Failed to create target dir: %v", err)
+				return false
+			}
+
+			// Build list of inbound directories
+			var inboundDirs []string
+			existingDirs := make([]string, 0, numExisting)
+			filesCreated := 0
+
+			// Create existing directories with test files
+			for i := 0; i < numExisting; i++ {
+				dir := filepath.Join(tempDir, "existing_"+itoa(i))
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Logf("Failed to create existing dir: %v", err)
+					return false
+				}
+				existingDirs = append(existingDirs, dir)
+				inboundDirs = append(inboundDirs, dir)
+
+				// Create a test file in each existing directory
+				filename := "Invoice 2024-03-15 Test" + itoa(i) + ".pdf"
+				filePath := filepath.Join(dir, filename)
+				if err := os.WriteFile(filePath, []byte("test content"), 0644); err != nil {
+					t.Logf("Failed to create test file: %v", err)
+					return false
+				}
+				filesCreated++
+			}
+
+			// Add non-existent directories
+			for i := 0; i < numMissing; i++ {
+				dir := filepath.Join(tempDir, "missing_"+itoa(i))
+				// Don't create this directory - it should be missing
+				inboundDirs = append(inboundDirs, dir)
+			}
+
+			// Create config file
+			cfg := config.Configuration{
+				InboundDirectories: inboundDirs,
+				PrefixRules: []config.PrefixRule{
+					{Prefix: "Invoice", OutboundDirectory: targetDir},
+				},
+			}
+			configPath := filepath.Join(tempDir, "config.json")
+			configData, _ := json.Marshal(cfg)
+			if err := os.WriteFile(configPath, configData, 0644); err != nil {
+				t.Logf("Failed to write config: %v", err)
+				return false
+			}
+
+			// Run orchestrator
+			auditConfig := audit.AuditConfig{
+				LogDirectory: auditDir,
+			}
+			options := &Options{
+				AuditConfig: &auditConfig,
+				AppVersion:  "1.0.0-test",
+				MachineID:   "test-machine",
+			}
+
+			summary, err := RunWithOptions(configPath, options)
+			if err != nil {
+				t.Logf("RunWithOptions failed: %v", err)
+				return false
+			}
+
+			// Verify scan errors for missing directories
+			if len(summary.ScanErrors) != numMissing {
+				t.Logf("Expected %d scan errors for missing dirs, got %d", numMissing, len(summary.ScanErrors))
+				for _, scanErr := range summary.ScanErrors {
+					t.Logf("  Scan error: %v", scanErr)
+				}
+				return false
+			}
+
+			// Verify each scan error mentions "does not exist"
+			for _, scanErr := range summary.ScanErrors {
+				if !strings.Contains(scanErr.Error(), "does not exist") {
+					t.Logf("Scan error should mention 'does not exist': %v", scanErr)
+					return false
+				}
+			}
+
+			// Verify files from existing directories were processed
+			if summary.TotalFiles != filesCreated {
+				t.Logf("Expected %d files processed, got %d", filesCreated, summary.TotalFiles)
+				return false
+			}
+
+			// Verify files were successfully moved
+			if summary.SuccessCount != filesCreated {
+				t.Logf("Expected %d successful moves, got %d", filesCreated, summary.SuccessCount)
+				return false
+			}
+
+			return true
+		},
+		gen.IntRange(0, 3),
+		gen.IntRange(0, 3),
+	))
+
+	properties.Property("All valid directories are processed even when some are missing", prop.ForAll(
+		func(numExisting int) bool {
+			if numExisting == 0 {
+				return true // Skip empty case
+			}
+
+			// Create temp directories
+			tempDir, err := os.MkdirTemp("", "runtime-path-all-valid-*")
+			if err != nil {
+				t.Logf("Failed to create temp dir: %v", err)
+				return false
+			}
+			defer os.RemoveAll(tempDir)
+
+			targetDir := filepath.Join(tempDir, "target")
+			auditDir := filepath.Join(tempDir, "audit")
+
+			if err := os.MkdirAll(targetDir, 0755); err != nil {
+				t.Logf("Failed to create target dir: %v", err)
+				return false
+			}
+
+			// Build list of inbound directories with one missing in the middle
+			var inboundDirs []string
+			filesCreated := 0
+
+			// Create first half of existing directories
+			for i := 0; i < numExisting/2; i++ {
+				dir := filepath.Join(tempDir, "first_"+itoa(i))
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Logf("Failed to create dir: %v", err)
+					return false
+				}
+				inboundDirs = append(inboundDirs, dir)
+
+				filename := "Invoice 2024-03-15 First" + itoa(i) + ".pdf"
+				filePath := filepath.Join(dir, filename)
+				if err := os.WriteFile(filePath, []byte("test content"), 0644); err != nil {
+					t.Logf("Failed to create test file: %v", err)
+					return false
+				}
+				filesCreated++
+			}
+
+			// Add a missing directory in the middle
+			missingDir := filepath.Join(tempDir, "missing_middle")
+			inboundDirs = append(inboundDirs, missingDir)
+
+			// Create second half of existing directories
+			for i := numExisting / 2; i < numExisting; i++ {
+				dir := filepath.Join(tempDir, "second_"+itoa(i))
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Logf("Failed to create dir: %v", err)
+					return false
+				}
+				inboundDirs = append(inboundDirs, dir)
+
+				filename := "Invoice 2024-03-15 Second" + itoa(i) + ".pdf"
+				filePath := filepath.Join(dir, filename)
+				if err := os.WriteFile(filePath, []byte("test content"), 0644); err != nil {
+					t.Logf("Failed to create test file: %v", err)
+					return false
+				}
+				filesCreated++
+			}
+
+			// Create config file
+			cfg := config.Configuration{
+				InboundDirectories: inboundDirs,
+				PrefixRules: []config.PrefixRule{
+					{Prefix: "Invoice", OutboundDirectory: targetDir},
+				},
+			}
+			configPath := filepath.Join(tempDir, "config.json")
+			configData, _ := json.Marshal(cfg)
+			if err := os.WriteFile(configPath, configData, 0644); err != nil {
+				t.Logf("Failed to write config: %v", err)
+				return false
+			}
+
+			// Run orchestrator
+			auditConfig := audit.AuditConfig{
+				LogDirectory: auditDir,
+			}
+			options := &Options{
+				AuditConfig: &auditConfig,
+				AppVersion:  "1.0.0-test",
+				MachineID:   "test-machine",
+			}
+
+			summary, err := RunWithOptions(configPath, options)
+			if err != nil {
+				t.Logf("RunWithOptions failed: %v", err)
+				return false
+			}
+
+			// Verify exactly one scan error for the missing directory
+			if len(summary.ScanErrors) != 1 {
+				t.Logf("Expected 1 scan error, got %d", len(summary.ScanErrors))
+				return false
+			}
+
+			// Verify all files from valid directories were processed
+			if summary.TotalFiles != filesCreated {
+				t.Logf("Expected %d files, got %d", filesCreated, summary.TotalFiles)
+				return false
+			}
+
+			// Verify all files were successfully moved
+			if summary.SuccessCount != filesCreated {
+				t.Logf("Expected %d successful moves, got %d", filesCreated, summary.SuccessCount)
+				return false
+			}
+
+			return true
+		},
+		gen.IntRange(2, 6),
+	))
+
+	properties.TestingRun(t, gopter.ConsoleReporter(false))
+}
+
+// itoa converts an integer to a string without importing strconv.
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var result []byte
+	negative := i < 0
+	if negative {
+		i = -i
+	}
+	for i > 0 {
+		result = append([]byte{byte('0' + i%10)}, result...)
+		i /= 10
+	}
+	if negative {
+		result = append([]byte{'-'}, result...)
+	}
+	return string(result)
+}

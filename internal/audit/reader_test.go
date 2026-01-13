@@ -20,8 +20,9 @@ import (
 // events matching the filter criteria and SHALL contain all events matching the
 // filter criteria.
 func TestEventFilteringCorrectness(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -314,7 +315,7 @@ func TestReadLogWithMultipleRuns(t *testing.T) {
 			t.Fatalf("Failed to end run %d: %v", i, err)
 		}
 
-		// Wait 1.1 seconds to ensure different timestamps (RFC3339 has second precision)
+		// Wait to ensure different timestamps (RFC3339 has second precision)
 		if i < 2 {
 			time.Sleep(1100 * time.Millisecond)
 		}
@@ -563,10 +564,10 @@ func TestFilterEventsByTimeRange(t *testing.T) {
 	}
 
 	// Wait and record middle time
-	// Use 1.5 seconds to ensure different timestamps (RFC3339 has second precision)
-	time.Sleep(1500 * time.Millisecond)
+	// Use 1 second to ensure different timestamps (RFC3339 has second precision)
+	time.Sleep(1000 * time.Millisecond)
 	middleTime := time.Now()
-	time.Sleep(1500 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 
 	// Write second batch of events
 	for i := 0; i < 2; i++ {

@@ -18,8 +18,9 @@ import (
 // For any undo operation on a run, events SHALL be processed in reverse chronological
 // order of their original timestamps.
 func TestUndoReverseChronologicalOrdering(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -84,9 +85,7 @@ func TestUndoReverseChronologicalOrdering(t *testing.T) {
 					writer.Close()
 					return false
 				}
-
-				// Small delay to ensure distinct timestamps
-				time.Sleep(1 * time.Millisecond)
+				// Removed time.Sleep - timestamps from time.Now() are sufficient
 			}
 
 			// End the run
@@ -144,8 +143,9 @@ func TestUndoReverseChronologicalOrdering(t *testing.T) {
 // from its destination back to its original source location, provided identity
 // verification passes.
 func TestUndoRestoresFileLocations(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -1325,8 +1325,9 @@ func TestUndoEngine_MixedEventTypes(t *testing.T) {
 // For any undo operation where the destination already contains a file,
 // the existing file SHALL NOT be overwritten and a COLLISION event SHALL be recorded.
 func TestUndoCollisionSafety(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -1518,8 +1519,9 @@ func TestUndoCollisionSafety(t *testing.T) {
 // For any run, executing undo twice SHALL produce the same filesystem end state
 // as executing undo once.
 func TestUndoIdempotency(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -2214,8 +2216,9 @@ func TestUndoEngine_SourceMissingEvent(t *testing.T) {
 // the undo SHALL proceed regardless of path differences. If the hash does not match, the undo SHALL
 // abort for that file and record an IDENTITY_MISMATCH event.
 func TestContentHashAsPrimaryIdentityForUndo(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 

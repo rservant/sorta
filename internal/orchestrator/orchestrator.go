@@ -47,6 +47,8 @@ type Options struct {
 	AppVersion       string             // Application version for audit records
 	MachineID        string             // Machine identifier for audit records
 	ProgressCallback ProgressCallback   // Progress reporting callback (optional)
+	ScanDepth        *int               // Override scan depth (nil = use config default)
+	SymlinkPolicy    string             // Override symlink policy (empty = use config default)
 }
 
 // Run executes the Sorta file organization workflow.
@@ -103,9 +105,33 @@ func RunWithOptions(configPath string, options *Options) (*Summary, error) {
 	}
 
 	// Scan all inbound directories and collect files
+	// Determine scan options
+	scanOpts := scanner.DefaultScanOptions()
+
+	// Use config values as defaults
+	scanOpts.MaxDepth = cfg.GetScanDepth()
+	scanOpts.SymlinkPolicy = cfg.GetSymlinkPolicy()
+
+	// Apply overrides from options
+	if options != nil {
+		if options.ScanDepth != nil {
+			scanOpts.MaxDepth = *options.ScanDepth
+		}
+		if options.SymlinkPolicy != "" {
+			scanOpts.SymlinkPolicy = options.SymlinkPolicy
+		}
+	}
+
 	var allFiles []scanner.FileEntry
 	for _, sourceDir := range cfg.InboundDirectories {
-		files, err := scanner.Scan(sourceDir)
+		// Runtime path validation: check if directory exists before scanning
+		// Requirements: 4.1, 4.2 - validate inbound directories exist before processing
+		if _, err := os.Stat(sourceDir); os.IsNotExist(err) {
+			summary.ScanErrors = append(summary.ScanErrors, fmt.Errorf("inbound directory does not exist: %s", sourceDir))
+			continue
+		}
+
+		files, err := scanner.ScanWithOptions(sourceDir, scanOpts)
 		if err != nil {
 			// Log error and continue with remaining directories (Requirement 2.2)
 			summary.ScanErrors = append(summary.ScanErrors, fmt.Errorf("failed to scan %s: %w", sourceDir, err))

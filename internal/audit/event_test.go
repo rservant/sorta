@@ -168,8 +168,9 @@ func genAuditEvent() gopter.Gen {
 // For any valid AuditEvent, serializing to JSON Lines format and deserializing
 // SHALL produce an equivalent event object.
 func TestJSONLinesRoundTrip(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 

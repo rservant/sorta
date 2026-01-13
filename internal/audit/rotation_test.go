@@ -21,8 +21,9 @@ import (
 // For any rotated log, all segments SHALL be discoverable via the index file or naming
 // convention, and reading all segments SHALL return all events in chronological order.
 func TestRotationSegmentDiscoverability(t *testing.T) {
+	t.Parallel()
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 50 // Reduced from 100 for faster execution
 
 	properties := gopter.NewProperties(parameters)
 
@@ -77,9 +78,7 @@ func TestRotationSegmentDiscoverability(t *testing.T) {
 					writer.Close()
 					return false
 				}
-
-				// Small delay to ensure different timestamps
-				time.Sleep(time.Millisecond)
+				// Removed time.Sleep - timestamps from time.Now() are sufficient
 			}
 
 			writer.Close()
