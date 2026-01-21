@@ -68,9 +68,46 @@ Sorta uses subcommands for different operations:
 # Enable verbose output for detailed progress
 ./sorta -v run
 ./sorta --verbose run
+
+# Preview what would happen without moving files
+./sorta run --dry-run
+./sorta -v run --dry-run
 ```
 
 The `-v`/`--verbose` flag can be combined with any command to show detailed progress information during execution.
+
+### Check Status
+
+See pending files across all inbound directories without making changes:
+
+```bash
+# Show pending files grouped by destination
+./sorta status
+
+# Show verbose status with individual file paths
+./sorta -v status
+```
+
+The status command scans all configured inbound directories and shows:
+- Files grouped by their destination (organized location or for-review)
+- Per-directory counts
+- Grand total of pending files
+
+### Dry-Run Mode
+
+Preview file organization without modifying the filesystem:
+
+```bash
+./sorta run --dry-run
+```
+
+Dry-run mode:
+- Shows each file that would be moved with its destination path
+- Shows files that would go to for-review directories
+- Displays a summary count (moved, for-review, skipped)
+- Does NOT create directories, move files, or write audit logs
+
+Use `-v` for additional details like matched prefix rules.
 
 ### View Configuration
 
