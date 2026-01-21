@@ -23,6 +23,7 @@ type Result struct {
 	OriginalName    string // Original filename before duplicate renaming (empty if not a duplicate)
 	EventType       string // Type of event: MOVE, ROUTE_TO_REVIEW, SKIP, ERROR
 	ReasonCode      string // Reason code for skip/review routing
+	Prefix          string // Matched prefix (for per-prefix breakdown in verbose mode)
 }
 
 // Summary represents the overall results of a Sorta run.
@@ -138,7 +139,7 @@ func RunDryRunWithOptions(configPath string, opts RunOptions, options *Options) 
 			return nil, err
 		}
 		// Convert Summary to RunResult
-		return convertSummaryToRunResult(summary), nil
+		return ConvertSummaryToRunResult(summary), nil
 	}
 
 	// Dry-run mode: collect operations without executing
@@ -213,8 +214,8 @@ func classifyFileOperation(file scanner.FileEntry, cfg *config.Configuration) cl
 	}
 }
 
-// convertSummaryToRunResult converts a Summary to a RunResult for non-dry-run mode.
-func convertSummaryToRunResult(summary *Summary) *RunResult {
+// ConvertSummaryToRunResult converts a Summary to a RunResult for non-dry-run mode.
+func ConvertSummaryToRunResult(summary *Summary) *RunResult {
 	result := &RunResult{
 		Moved:     make([]FileOperation, 0),
 		ForReview: make([]FileOperation, 0),
@@ -226,6 +227,7 @@ func convertSummaryToRunResult(summary *Summary) *RunResult {
 		op := FileOperation{
 			Source:      r.SourcePath,
 			Destination: r.DestinationPath,
+			Prefix:      r.Prefix,
 			Reason:      r.ReasonCode,
 		}
 
@@ -555,6 +557,10 @@ func processFileWithAudit(file scanner.FileEntry, cfg *config.Configuration, aud
 		eventType = "DUPLICATE_DETECTED"
 	}
 
+	// Extract prefix for per-prefix breakdown in verbose mode
+	// Requirements: 3.6 - Per-prefix breakdown in verbose mode
+	prefix := extractPrefixFromNormalisedFilename(classification.NormalisedFilename)
+
 	return Result{
 		SourcePath:      moveResult.SourcePath,
 		DestinationPath: moveResult.DestinationPath,
@@ -562,6 +568,7 @@ func processFileWithAudit(file scanner.FileEntry, cfg *config.Configuration, aud
 		IsDuplicate:     moveResult.IsDuplicate,
 		OriginalName:    moveResult.OriginalName,
 		EventType:       eventType,
+		Prefix:          prefix,
 	}
 }
 
@@ -632,4 +639,43 @@ func (s *Summary) PrintSummary() string {
 	}
 	return fmt.Sprintf("Processed %d files: %d successful, %d errors",
 		s.TotalFiles, s.SuccessCount, s.ErrorCount)
+}
+
+// ProcessSingleFile processes a single file for organization.
+// This is used by the watcher to organize files as they arrive.
+// It loads the configuration, classifies the file, and organizes it.
+// Requirements: 1.2 - Organize files according to rules
+func ProcessSingleFile(configPath string, filePath string) (*Result, error) {
+	// Load configuration
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Get file info
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	// Skip directories
+	if info.IsDir() {
+		return &Result{
+			SourcePath: filePath,
+			Success:    false,
+			EventType:  "SKIP",
+			ReasonCode: "is_directory",
+		}, nil
+	}
+
+	// Create a FileEntry for the file
+	file := scanner.FileEntry{
+		Name:     info.Name(),
+		FullPath: filePath,
+	}
+
+	// Process the file
+	result := processFile(file, cfg)
+
+	return &result, nil
 }

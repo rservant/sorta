@@ -382,3 +382,324 @@ func TestLoadOrCreateNewFileHasAuditDefaults(t *testing.T) {
 		t.Errorf("MinRetentionDays: expected %d, got %d", defaults.MinRetentionDays, config.Audit.MinRetentionDays)
 	}
 }
+
+// Feature: watch-mode, Task 2.2: Unit tests for watch configuration
+// Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5
+
+func TestWatchConfigDefaultsAppliedWhenMissing(t *testing.T) {
+	// Create a config file without watch section
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.json")
+
+	configJSON := `{
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}]
+	}`
+
+	if err := os.WriteFile(tmpFile, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	// Load the config
+	config, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Get watch config (should apply defaults)
+	watchConfig := config.GetWatchConfig()
+
+	// Verify default debounce is 2 seconds (Requirement 2.2)
+	if watchConfig.DebounceSeconds != DefaultDebounceSeconds {
+		t.Errorf("DebounceSeconds: expected default %d, got %d", DefaultDebounceSeconds, watchConfig.DebounceSeconds)
+	}
+	if watchConfig.DebounceSeconds != 2 {
+		t.Errorf("DebounceSeconds: expected 2, got %d", watchConfig.DebounceSeconds)
+	}
+
+	// Verify default stability is 1000ms (Requirement 2.4)
+	if watchConfig.StableThresholdMs != DefaultStableThresholdMs {
+		t.Errorf("StableThresholdMs: expected default %d, got %d", DefaultStableThresholdMs, watchConfig.StableThresholdMs)
+	}
+	if watchConfig.StableThresholdMs != 1000 {
+		t.Errorf("StableThresholdMs: expected 1000, got %d", watchConfig.StableThresholdMs)
+	}
+
+	// Verify default ignore patterns (Requirement 2.3)
+	expectedPatterns := DefaultIgnorePatterns()
+	if !reflect.DeepEqual(watchConfig.IgnorePatterns, expectedPatterns) {
+		t.Errorf("IgnorePatterns: expected %v, got %v", expectedPatterns, watchConfig.IgnorePatterns)
+	}
+}
+
+func TestWatchConfigDefaultDebounceIs2Seconds(t *testing.T) {
+	// Validates: Requirement 2.2 - debounceSeconds default is 2
+	config := &Configuration{
+		InboundDirectories: []string{"source"},
+		PrefixRules:        []PrefixRule{{Prefix: "Test", OutboundDirectory: "test"}},
+	}
+
+	watchConfig := config.GetWatchConfig()
+
+	if watchConfig.DebounceSeconds != 2 {
+		t.Errorf("Default debounce should be 2 seconds, got %d", watchConfig.DebounceSeconds)
+	}
+}
+
+func TestWatchConfigDefaultStabilityIs1000Ms(t *testing.T) {
+	// Validates: Requirement 2.4 - stableThresholdMs default is 1000
+	config := &Configuration{
+		InboundDirectories: []string{"source"},
+		PrefixRules:        []PrefixRule{{Prefix: "Test", OutboundDirectory: "test"}},
+	}
+
+	watchConfig := config.GetWatchConfig()
+
+	if watchConfig.StableThresholdMs != 1000 {
+		t.Errorf("Default stability threshold should be 1000ms, got %d", watchConfig.StableThresholdMs)
+	}
+}
+
+func TestWatchConfigCustomValuesOverrideDefaults(t *testing.T) {
+	// Validates: Requirements 2.1, 2.2, 2.3, 2.4
+	// Create a config file with custom watch section
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.json")
+
+	configJSON := `{
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}],
+		"watch": {
+			"debounceSeconds": 5,
+			"stableThresholdMs": 2000,
+			"ignorePatterns": [".temp", ".partial", ".incomplete"]
+		}
+	}`
+
+	if err := os.WriteFile(tmpFile, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	// Load the config
+	config, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Get watch config
+	watchConfig := config.GetWatchConfig()
+
+	// Verify custom debounce overrides default
+	if watchConfig.DebounceSeconds != 5 {
+		t.Errorf("DebounceSeconds: expected 5, got %d", watchConfig.DebounceSeconds)
+	}
+
+	// Verify custom stability overrides default
+	if watchConfig.StableThresholdMs != 2000 {
+		t.Errorf("StableThresholdMs: expected 2000, got %d", watchConfig.StableThresholdMs)
+	}
+
+	// Verify custom ignore patterns override defaults
+	expectedPatterns := []string{".temp", ".partial", ".incomplete"}
+	if !reflect.DeepEqual(watchConfig.IgnorePatterns, expectedPatterns) {
+		t.Errorf("IgnorePatterns: expected %v, got %v", expectedPatterns, watchConfig.IgnorePatterns)
+	}
+}
+
+func TestWatchConfigIgnorePatternsApplied(t *testing.T) {
+	// Validates: Requirement 2.3 - ignorePatterns for files to skip
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.json")
+
+	configJSON := `{
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}],
+		"watch": {
+			"ignorePatterns": [".tmp", ".part", ".download", ".crdownload"]
+		}
+	}`
+
+	if err := os.WriteFile(tmpFile, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	config, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	watchConfig := config.GetWatchConfig()
+
+	// Verify all custom patterns are present
+	expectedPatterns := []string{".tmp", ".part", ".download", ".crdownload"}
+	if len(watchConfig.IgnorePatterns) != len(expectedPatterns) {
+		t.Errorf("IgnorePatterns length: expected %d, got %d", len(expectedPatterns), len(watchConfig.IgnorePatterns))
+	}
+
+	for i, pattern := range expectedPatterns {
+		if watchConfig.IgnorePatterns[i] != pattern {
+			t.Errorf("IgnorePatterns[%d]: expected %q, got %q", i, pattern, watchConfig.IgnorePatterns[i])
+		}
+	}
+}
+
+func TestWatchConfigPartialOverrideAppliesDefaults(t *testing.T) {
+	// Validates: Requirements 2.1, 2.2, 2.3, 2.4
+	// Test that partial watch config gets defaults for unspecified fields
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.json")
+
+	// Only specify debounceSeconds, others should get defaults
+	configJSON := `{
+		"inboundDirectories": ["source1"],
+		"prefixRules": [{"prefix": "Invoice", "outboundDirectory": "invoices"}],
+		"watch": {
+			"debounceSeconds": 10
+		}
+	}`
+
+	if err := os.WriteFile(tmpFile, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	config, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	watchConfig := config.GetWatchConfig()
+
+	// Verify custom debounce is preserved
+	if watchConfig.DebounceSeconds != 10 {
+		t.Errorf("DebounceSeconds: expected 10, got %d", watchConfig.DebounceSeconds)
+	}
+
+	// Verify defaults are applied for unspecified fields
+	if watchConfig.StableThresholdMs != DefaultStableThresholdMs {
+		t.Errorf("StableThresholdMs: expected default %d, got %d", DefaultStableThresholdMs, watchConfig.StableThresholdMs)
+	}
+
+	expectedPatterns := DefaultIgnorePatterns()
+	if !reflect.DeepEqual(watchConfig.IgnorePatterns, expectedPatterns) {
+		t.Errorf("IgnorePatterns: expected default %v, got %v", expectedPatterns, watchConfig.IgnorePatterns)
+	}
+}
+
+func TestApplyWatchDefaultsCreatesConfigWhenNil(t *testing.T) {
+	// Validates: Requirement 2.1 - watch section with settings
+	config := &Configuration{
+		InboundDirectories: []string{"source"},
+		PrefixRules:        []PrefixRule{{Prefix: "Test", OutboundDirectory: "test"}},
+		Watch:              nil,
+	}
+
+	config.ApplyWatchDefaults()
+
+	if config.Watch == nil {
+		t.Fatal("Expected Watch config to be created, got nil")
+	}
+
+	if config.Watch.DebounceSeconds != DefaultDebounceSeconds {
+		t.Errorf("DebounceSeconds: expected %d, got %d", DefaultDebounceSeconds, config.Watch.DebounceSeconds)
+	}
+
+	if config.Watch.StableThresholdMs != DefaultStableThresholdMs {
+		t.Errorf("StableThresholdMs: expected %d, got %d", DefaultStableThresholdMs, config.Watch.StableThresholdMs)
+	}
+
+	expectedPatterns := DefaultIgnorePatterns()
+	if !reflect.DeepEqual(config.Watch.IgnorePatterns, expectedPatterns) {
+		t.Errorf("IgnorePatterns: expected %v, got %v", expectedPatterns, config.Watch.IgnorePatterns)
+	}
+}
+
+func TestApplyWatchDefaultsPreservesExistingValues(t *testing.T) {
+	// Validates: Requirements 2.2, 2.3, 2.4
+	config := &Configuration{
+		InboundDirectories: []string{"source"},
+		PrefixRules:        []PrefixRule{{Prefix: "Test", OutboundDirectory: "test"}},
+		Watch: &WatchConfig{
+			DebounceSeconds:   7,
+			StableThresholdMs: 1500,
+			IgnorePatterns:    []string{".custom"},
+		},
+	}
+
+	config.ApplyWatchDefaults()
+
+	// Verify existing values are preserved
+	if config.Watch.DebounceSeconds != 7 {
+		t.Errorf("DebounceSeconds: expected 7, got %d", config.Watch.DebounceSeconds)
+	}
+
+	if config.Watch.StableThresholdMs != 1500 {
+		t.Errorf("StableThresholdMs: expected 1500, got %d", config.Watch.StableThresholdMs)
+	}
+
+	if !reflect.DeepEqual(config.Watch.IgnorePatterns, []string{".custom"}) {
+		t.Errorf("IgnorePatterns: expected [.custom], got %v", config.Watch.IgnorePatterns)
+	}
+}
+
+func TestDefaultWatchConfigReturnsCorrectDefaults(t *testing.T) {
+	// Validates: Requirements 2.2, 2.3, 2.4
+	defaults := DefaultWatchConfig()
+
+	if defaults.DebounceSeconds != 2 {
+		t.Errorf("Default DebounceSeconds should be 2, got %d", defaults.DebounceSeconds)
+	}
+
+	if defaults.StableThresholdMs != 1000 {
+		t.Errorf("Default StableThresholdMs should be 1000, got %d", defaults.StableThresholdMs)
+	}
+
+	expectedPatterns := []string{".tmp", ".part", ".download"}
+	if !reflect.DeepEqual(defaults.IgnorePatterns, expectedPatterns) {
+		t.Errorf("Default IgnorePatterns should be %v, got %v", expectedPatterns, defaults.IgnorePatterns)
+	}
+}
+
+func TestWatchConfigRoundTrip(t *testing.T) {
+	// Validates: Requirements 2.1, 2.2, 2.3, 2.4
+	// Test that watch config survives save/load cycle
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.json")
+
+	original := &Configuration{
+		InboundDirectories: []string{"source"},
+		PrefixRules:        []PrefixRule{{Prefix: "Test", OutboundDirectory: "test"}},
+		Watch: &WatchConfig{
+			DebounceSeconds:   3,
+			StableThresholdMs: 500,
+			IgnorePatterns:    []string{".temp", ".partial"},
+		},
+	}
+
+	// Save the configuration
+	if err := Save(original, tmpFile); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Load it back
+	loaded, err := LoadOrCreate(tmpFile)
+	if err != nil {
+		t.Fatalf("LoadOrCreate failed: %v", err)
+	}
+
+	// Verify watch config is preserved
+	if loaded.Watch == nil {
+		t.Fatal("Expected Watch config to be loaded, got nil")
+	}
+
+	if loaded.Watch.DebounceSeconds != original.Watch.DebounceSeconds {
+		t.Errorf("DebounceSeconds: expected %d, got %d", original.Watch.DebounceSeconds, loaded.Watch.DebounceSeconds)
+	}
+
+	if loaded.Watch.StableThresholdMs != original.Watch.StableThresholdMs {
+		t.Errorf("StableThresholdMs: expected %d, got %d", original.Watch.StableThresholdMs, loaded.Watch.StableThresholdMs)
+	}
+
+	if !reflect.DeepEqual(loaded.Watch.IgnorePatterns, original.Watch.IgnorePatterns) {
+		t.Errorf("IgnorePatterns: expected %v, got %v", original.Watch.IgnorePatterns, loaded.Watch.IgnorePatterns)
+	}
+}

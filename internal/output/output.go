@@ -290,3 +290,38 @@ func (o *Output) PrintSummary(moved, forReview, skipped int) {
 
 	o.Info("Summary: %d files (%s)", total, strings.Join(parts, ", "))
 }
+
+// PrintRunSummary prints the run summary statistics.
+// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 - Run summary statistics display
+func (o *Output) PrintRunSummary(summary *orchestrator.RunSummary) {
+	if summary == nil {
+		return
+	}
+
+	o.Info("")
+	o.Info("Summary:")
+	o.Info("  Moved: %d files", summary.Moved)
+	o.Info("  For Review: %d files", summary.ForReview)
+	o.Info("  Skipped: %d files", summary.Skipped)
+	o.Info("  Errors: %d", summary.Errors)
+	o.Info("  Duration: %.2fs", summary.Duration.Seconds())
+
+	// Show per-prefix breakdown in verbose mode
+	// Requirements: 3.6 - Per-prefix breakdown in verbose mode
+	if o.config.Verbose && len(summary.ByPrefix) > 0 {
+		o.Info("")
+		o.Info("Per-Prefix Breakdown:")
+
+		// Sort prefixes for consistent output
+		prefixes := make([]string, 0, len(summary.ByPrefix))
+		for prefix := range summary.ByPrefix {
+			prefixes = append(prefixes, prefix)
+		}
+		sort.Strings(prefixes)
+
+		for _, prefix := range prefixes {
+			count := summary.ByPrefix[prefix]
+			o.Info("  %s: %d files", prefix, count)
+		}
+	}
+}

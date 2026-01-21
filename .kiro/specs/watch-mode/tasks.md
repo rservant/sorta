@@ -6,8 +6,8 @@ This implementation adds file system watching, run summaries, and audit statisti
 
 ## Tasks
 
-- [ ] 1. Implement File Watcher
-  - [ ] 1.1 Create watcher component
+- [x] 1. Implement File Watcher
+  - [x] 1.1 Create watcher component
     - Create `internal/watcher/watcher.go`
     - Add `Watcher`, `WatchConfig`, `WatchSummary` types
     - Implement `Start(dirs []string) error`
@@ -15,25 +15,25 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Use fsnotify for file system events
     - _Requirements: 1.1, 1.6, 1.7_
 
-  - [ ] 1.2 Implement debounce handler
+  - [x] 1.2 Implement debounce handler
     - Create `internal/watcher/debounce.go`
     - Add `Debouncer` type with configurable delay
     - Coalesce rapid events for same file
     - _Requirements: 1.3_
 
-  - [ ] 1.3 Implement file stability checker
+  - [x] 1.3 Implement file stability checker
     - Create `internal/watcher/stability.go`
     - Add `StabilityChecker` type
     - Wait for file size to stabilize before processing
     - _Requirements: 1.4_
 
-  - [ ] 1.4 Implement temporary file filtering
+  - [x] 1.4 Implement temporary file filtering
     - Add ignore pattern matching
     - Skip files matching .tmp, .part, .download, etc.
     - Support configurable patterns
     - _Requirements: 1.8_
 
-  - [ ] 1.5 Write unit tests for watcher
+  - [x] 1.5 Write unit tests for watcher
     - Test new file triggers organization
     - Test rapid events are debounced
     - Test file processed after size stabilizes
@@ -41,39 +41,39 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Test audit events logged for each operation
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.8_
 
-- [ ] 2. Add Watch Configuration
-  - [ ] 2.1 Add watch config to configuration
+- [x] 2. Add Watch Configuration
+  - [x] 2.1 Add watch config to configuration
     - Add `Watch` field to `Configuration` struct
     - Add `WatchConfig` struct with debounce, stability, ignore fields
     - Implement defaults (debounce: 2s, stability: 1000ms)
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ] 2.2 Write unit tests for watch configuration
+  - [x] 2.2 Write unit tests for watch configuration
     - Test default debounce is 2s
     - Test default stability is 1000ms
     - Test custom values override defaults
     - Test ignore patterns are applied
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-- [ ] 3. Implement Run Summary
-  - [ ] 3.1 Create summary generator
+- [x] 3. Implement Run Summary
+  - [x] 3.1 Create summary generator
     - Create `internal/orchestrator/summary.go`
     - Add `RunSummary` type
     - Implement `GenerateSummary(result *RunResult, verbose bool)`
     - Calculate moved, for-review, skipped, errors, duration
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-  - [ ] 3.2 Add per-prefix breakdown for verbose mode
+  - [x] 3.2 Add per-prefix breakdown for verbose mode
     - Track counts per prefix during run
     - Include in summary when verbose=true
     - _Requirements: 3.6_
 
-  - [ ] 3.3 Integrate summary into run command
+  - [x] 3.3 Integrate summary into run command
     - Generate summary after run completes
     - Display using output package
     - _Requirements: 3.1_
 
-  - [ ] 3.4 Write unit tests for run summary
+  - [x] 3.4 Write unit tests for run summary
     - Test moved count matches actual moves
     - Test for-review count matches routed files
     - Test skipped count matches skipped files
@@ -82,25 +82,25 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Test verbose mode includes per-prefix breakdown
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-- [ ] 4. Implement Audit Statistics
-  - [ ] 4.1 Create stats aggregator
+- [x] 4. Implement Audit Statistics
+  - [x] 4.1 Create stats aggregator
     - Create `internal/audit/stats.go`
     - Add `AuditStats` and `StatsOptions` types
     - Implement `AggregateStats(logDir string, opts StatsOptions)`
     - _Requirements: 4.1_
 
-  - [ ] 4.2 Implement metric aggregation
+  - [x] 4.2 Implement metric aggregation
     - Count total organized, for-review, runs, undos
     - Track per-prefix counts (top N)
     - Calculate date range
     - _Requirements: 4.2, 4.3, 4.4, 4.5, 4.6_
 
-  - [ ] 4.3 Implement time filtering
+  - [x] 4.3 Implement time filtering
     - Support --since flag for filtering
     - Only include runs after specified time
     - _Requirements: 4.7_
 
-  - [ ] 4.4 Write property test for stats aggregation
+  - [x] 4.4 Write property test for stats aggregation
     - **Property: Stats Totals Equal Sum of Parts**
     - Generate audit logs with random events
     - Verify total organized equals sum of per-prefix counts
@@ -109,8 +109,8 @@ This implementation adds file system watching, run summaries, and audit statisti
     - _Rationale: Mathematical invariant - aggregated totals must equal sum of components_
     - **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7**
 
-- [ ] 5. Update CLI
-  - [ ] 5.1 Add watch command
+- [x] 5. Update CLI
+  - [x] 5.1 Add watch command
     - Implement `watch` subcommand
     - Parse `--debounce N` flag
     - Start watcher with configured directories
@@ -118,7 +118,7 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Display summary on exit
     - _Requirements: 1.1, 1.6, 1.7, 2.5_
 
-  - [ ] 5.2 Add audit stats command
+  - [x] 5.2 Add audit stats command
     - Implement `audit stats` subcommand
     - Parse `--since` flag
     - Display aggregated statistics

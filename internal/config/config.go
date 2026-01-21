@@ -52,6 +52,33 @@ const (
 	SymlinkPolicyError  = "error"
 )
 
+// Watch configuration defaults
+const (
+	DefaultDebounceSeconds   = 2
+	DefaultStableThresholdMs = 1000
+)
+
+// DefaultIgnorePatterns returns the default patterns for files to ignore during watch.
+func DefaultIgnorePatterns() []string {
+	return []string{".tmp", ".part", ".download"}
+}
+
+// WatchConfig contains settings for watch mode.
+type WatchConfig struct {
+	DebounceSeconds   int      `json:"debounceSeconds,omitempty"`   // default: 2
+	StableThresholdMs int      `json:"stableThresholdMs,omitempty"` // default: 1000
+	IgnorePatterns    []string `json:"ignorePatterns,omitempty"`    // default: [".tmp", ".part", ".download"]
+}
+
+// DefaultWatchConfig returns a WatchConfig with sensible defaults.
+func DefaultWatchConfig() *WatchConfig {
+	return &WatchConfig{
+		DebounceSeconds:   DefaultDebounceSeconds,
+		StableThresholdMs: DefaultStableThresholdMs,
+		IgnorePatterns:    DefaultIgnorePatterns(),
+	}
+}
+
 // Configuration holds all settings for Sorta.
 type Configuration struct {
 	InboundDirectories []string           `json:"inboundDirectories"`
@@ -59,6 +86,7 @@ type Configuration struct {
 	Audit              *audit.AuditConfig `json:"audit,omitempty"`
 	SymlinkPolicy      string             `json:"symlinkPolicy,omitempty"`
 	ScanDepth          *int               `json:"scanDepth,omitempty"` // nil = default (0)
+	Watch              *WatchConfig       `json:"watch,omitempty"`
 }
 
 // GetSymlinkPolicy returns the configured symlink policy or default "skip".
@@ -135,6 +163,56 @@ func (c *Configuration) ApplyAuditDefaults() {
 	if c.Audit.MinRetentionDays == 0 {
 		c.Audit.MinRetentionDays = defaults.MinRetentionDays
 	}
+}
+
+// ApplyWatchDefaults ensures the Watch configuration has sensible defaults.
+// If Watch is nil, it creates a new WatchConfig with defaults.
+// If Watch exists but has zero values, it applies defaults for those fields.
+func (c *Configuration) ApplyWatchDefaults() {
+	defaults := DefaultWatchConfig()
+
+	if c.Watch == nil {
+		c.Watch = defaults
+		return
+	}
+
+	// Apply defaults for zero values
+	if c.Watch.DebounceSeconds == 0 {
+		c.Watch.DebounceSeconds = defaults.DebounceSeconds
+	}
+	if c.Watch.StableThresholdMs == 0 {
+		c.Watch.StableThresholdMs = defaults.StableThresholdMs
+	}
+	if c.Watch.IgnorePatterns == nil {
+		c.Watch.IgnorePatterns = defaults.IgnorePatterns
+	}
+}
+
+// GetWatchConfig returns the watch configuration with defaults applied.
+// This is useful when you need the watch config but don't want to modify the Configuration.
+func (c *Configuration) GetWatchConfig() *WatchConfig {
+	if c.Watch == nil {
+		return DefaultWatchConfig()
+	}
+
+	// Return a copy with defaults applied for zero values
+	result := &WatchConfig{
+		DebounceSeconds:   c.Watch.DebounceSeconds,
+		StableThresholdMs: c.Watch.StableThresholdMs,
+		IgnorePatterns:    c.Watch.IgnorePatterns,
+	}
+
+	if result.DebounceSeconds == 0 {
+		result.DebounceSeconds = DefaultDebounceSeconds
+	}
+	if result.StableThresholdMs == 0 {
+		result.StableThresholdMs = DefaultStableThresholdMs
+	}
+	if result.IgnorePatterns == nil {
+		result.IgnorePatterns = DefaultIgnorePatterns()
+	}
+
+	return result
 }
 
 // HasPrefix checks if a prefix already exists in the configuration (case-insensitive).

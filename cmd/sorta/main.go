@@ -6,13 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sorta/internal/audit"
 	"sorta/internal/config"
 	"sorta/internal/discovery"
 	"sorta/internal/orchestrator"
 	"sorta/internal/output"
+	"sorta/internal/watcher"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const defaultConfigPath = "sorta-config.json"
@@ -28,6 +32,7 @@ type ParseResult struct {
 	DryRun        bool // For run --dry-run
 	DiscoverDepth int  // For discover --depth N (-1 means unlimited)
 	Interactive   bool // For discover --interactive
+	Debounce      int  // For watch --debounce N (-1 means not set)
 }
 
 // parseArgs parses command line arguments and extracts the command, command arguments, config path, and verbose flag.
@@ -38,6 +43,7 @@ func parseArgs(args []string) (ParseResult, error) {
 		CmdArgs:       []string{},
 		Depth:         -1, // -1 means not set
 		DiscoverDepth: -1, // -1 means unlimited depth
+		Debounce:      -1, // -1 means not set (use config default)
 	}
 
 	if len(args) == 0 {
@@ -156,6 +162,31 @@ func parseArgs(args []string) (ParseResult, error) {
 			continue
 		}
 
+		// --debounce flag for watch command
+		// Requirements: 2.5 - Override configured debounce period
+		if arg == "--debounce" {
+			if i+1 >= len(args) {
+				return ParseResult{}, errors.New("missing value for debounce flag")
+			}
+			debounce, err := parseDepth(args[i+1]) // reuse parseDepth for integer parsing
+			if err != nil {
+				return ParseResult{}, errors.New("debounce must be a non-negative integer")
+			}
+			result.Debounce = debounce
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(arg, "--debounce=") {
+			debounceStr := strings.TrimPrefix(arg, "--debounce=")
+			debounce, err := parseDepth(debounceStr)
+			if err != nil {
+				return ParseResult{}, errors.New("debounce must be a non-negative integer")
+			}
+			result.Debounce = debounce
+			i++
+			continue
+		}
+
 		// Not a recognized flag, add to command args
 		result.CmdArgs = append(result.CmdArgs, arg)
 		i++
@@ -232,6 +263,8 @@ func main() {
 		exitCode = runAuditCommand(parsed.CmdArgs, parsed.Verbose)
 	case "undo":
 		exitCode = runUndoCommand(parsed.CmdArgs, parsed.Verbose)
+	case "watch":
+		exitCode = runWatchCommand(parsed.ConfigPath, parsed.Verbose, parsed.Debounce)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown command '%s'\n", parsed.Command)
 		printUsage()
@@ -730,8 +763,15 @@ func runRunCommand(configPath string, verbose bool, depthOverride int, dryRun bo
 		}
 	}
 
+	// Track start time for summary duration
+	// Requirements: 3.1, 3.5 - Run summary statistics with duration
+	startTime := time.Now()
+
 	// Run the orchestrator with auditing enabled
 	summary, err := orchestrator.RunWithOptions(configPath, options)
+
+	// Calculate duration
+	duration := time.Since(startTime)
 
 	// End progress indicator before showing results
 	out.EndProgress()
@@ -755,8 +795,11 @@ func runRunCommand(configPath string, verbose bool, depthOverride int, dryRun bo
 		}
 	}
 
-	// Print summary
-	out.Info("%s", summary.PrintSummary())
+	// Generate and print run summary
+	// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 - Run summary statistics
+	runResult := orchestrator.ConvertSummaryToRunResult(summary)
+	runSummary := orchestrator.GenerateSummary(runResult, duration, verbose)
+	out.PrintRunSummary(runSummary)
 
 	// Exit with error code if there were any errors
 	if summary.HasErrors() {
@@ -864,6 +907,8 @@ func runAuditCommand(args []string, verbose bool) int {
 		return runAuditShowCommand(subArgs, out)
 	case "export":
 		return runAuditExportCommand(subArgs, out)
+	case "stats":
+		return runAuditStatsCommand(subArgs, out)
 	case "help", "-h", "--help":
 		printAuditUsage()
 		return 0
@@ -1121,6 +1166,127 @@ func runAuditExportCommand(args []string, out *output.Output) int {
 	return 0
 }
 
+// runAuditStatsCommand displays aggregate statistics across all audit runs.
+// Requirements: 4.1, 4.7
+func runAuditStatsCommand(args []string, out *output.Output) int {
+	var sinceTime *time.Time
+
+	// Parse --since flag
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--since" && i+1 < len(args) {
+			t, err := parseSinceDate(args[i+1])
+			if err != nil {
+				out.Error("Error parsing --since date: %v", err)
+				out.Error("Supported formats: 2024-01-01 or 2024-01-01T15:04:05")
+				return 1
+			}
+			sinceTime = &t
+			i++
+		} else if strings.HasPrefix(args[i], "--since=") {
+			dateStr := strings.TrimPrefix(args[i], "--since=")
+			t, err := parseSinceDate(dateStr)
+			if err != nil {
+				out.Error("Error parsing --since date: %v", err)
+				out.Error("Supported formats: 2024-01-01 or 2024-01-01T15:04:05")
+				return 1
+			}
+			sinceTime = &t
+		}
+	}
+
+	logDir := getAuditLogDir()
+
+	// Create stats options
+	opts := audit.StatsOptions{
+		Since: sinceTime,
+		TopN:  10, // Show top 10 prefixes by default
+	}
+
+	// Aggregate stats
+	stats, err := audit.AggregateStats(logDir, opts)
+	if err != nil {
+		out.Error("Error aggregating stats: %v", err)
+		return 1
+	}
+
+	// Display stats
+	out.Info("Audit Statistics")
+	out.Info("%s", strings.Repeat("=", 50))
+
+	// Show time filter if applied
+	if sinceTime != nil {
+		out.Info("Filtered: runs since %s", sinceTime.Format("2006-01-02"))
+		out.Info("")
+	}
+
+	// Check if there are any runs
+	if stats.TotalRuns == 0 && stats.TotalUndos == 0 {
+		out.Info("No audit runs found.")
+		return 0
+	}
+
+	// Display date range
+	out.Info("Date Range:")
+	out.Info("  First run: %s", stats.FirstRun.Format("2006-01-02 15:04:05"))
+	out.Info("  Last run:  %s", stats.LastRun.Format("2006-01-02 15:04:05"))
+	out.Info("")
+
+	// Display run counts
+	out.Info("Run Statistics:")
+	out.Info("  Total organize runs: %d", stats.TotalRuns)
+	out.Info("  Total undo operations: %d", stats.TotalUndos)
+	out.Info("")
+
+	// Display file counts
+	out.Info("File Statistics:")
+	out.Info("  Total files organized: %d", stats.TotalOrganized)
+	out.Info("  Total files for review: %d", stats.TotalForReview)
+	out.Info("")
+
+	// Display per-prefix breakdown
+	if len(stats.ByPrefix) > 0 {
+		out.Info("Files by Prefix (top %d):", len(stats.ByPrefix))
+		// Sort prefixes by count for display
+		type prefixCount struct {
+			prefix string
+			count  int
+		}
+		var sorted []prefixCount
+		for prefix, count := range stats.ByPrefix {
+			sorted = append(sorted, prefixCount{prefix, count})
+		}
+		// Sort by count descending
+		for i := 0; i < len(sorted)-1; i++ {
+			for j := i + 1; j < len(sorted); j++ {
+				if sorted[j].count > sorted[i].count {
+					sorted[i], sorted[j] = sorted[j], sorted[i]
+				}
+			}
+		}
+		for _, pc := range sorted {
+			out.Info("  %-20s %d", pc.prefix, pc.count)
+		}
+	}
+
+	return 0
+}
+
+// parseSinceDate parses a date string in various formats.
+// Supported formats: 2024-01-01 or 2024-01-01T15:04:05
+func parseSinceDate(s string) (time.Time, error) {
+	// Try full datetime format first
+	if t, err := time.Parse("2006-01-02T15:04:05", s); err == nil {
+		return t, nil
+	}
+
+	// Try date-only format
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, fmt.Errorf("invalid date format: %s", s)
+}
+
 // runUndoCommand handles the undo command.
 // Requirements: 4.1, 4.2, 4.3, 5.1, 5.3, 6.1, 7.2
 func runUndoCommand(args []string, verbose bool) int {
@@ -1331,6 +1497,154 @@ func runUndoPreview(reader *audit.AuditReader, runID string, pathMappings []audi
 	return 0
 }
 
+// runWatchCommand starts the file watcher for automatic organization.
+// Requirements: 1.1, 1.6, 1.7, 2.5 - Watch mode with graceful shutdown and summary
+func runWatchCommand(configPath string, verbose bool, debounceOverride int) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
+	// Load configuration
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		out.Error("Error loading config: %v", err)
+		return 1
+	}
+
+	// Validate that we have inbound directories to watch
+	// Requirements: 1.1 - Monitor all configured inbound directories
+	if len(cfg.InboundDirectories) == 0 {
+		out.Error("Error: No inbound directories configured")
+		out.Error("Add inbound directories using: sorta add-inbound <directory>")
+		return 1
+	}
+
+	// Get watch configuration with defaults applied
+	watchCfg := cfg.GetWatchConfig()
+
+	// Apply debounce override from --debounce flag
+	// Requirements: 2.5 - Override configured debounce period
+	if debounceOverride >= 0 {
+		watchCfg.DebounceSeconds = debounceOverride
+	}
+
+	// Convert config.WatchConfig to watcher.WatchConfig
+	watcherCfg := &watcher.WatchConfig{
+		DebounceSeconds:   watchCfg.DebounceSeconds,
+		StableThresholdMs: watchCfg.StableThresholdMs,
+		IgnorePatterns:    watchCfg.IgnorePatterns,
+	}
+
+	// Set up audit configuration for logging watch operations
+	auditConfig := *cfg.Audit
+	if auditConfig.LogDirectory == "" {
+		auditConfig.LogDirectory = getAuditLogDir()
+	}
+
+	// Create the audit log directory if it doesn't exist
+	if err := os.MkdirAll(auditConfig.LogDirectory, 0755); err != nil {
+		out.Error("Error creating audit directory: %v", err)
+		return 1
+	}
+
+	// Create file handler that uses the orchestrator to organize files
+	fileHandler := func(path string) (organized bool, reviewed bool, err error) {
+		// Use orchestrator to process the single file
+		result, err := orchestrator.ProcessSingleFile(configPath, path)
+		if err != nil {
+			return false, false, err
+		}
+
+		// Log the operation in verbose mode
+		if verbose && result != nil {
+			switch result.EventType {
+			case "MOVE":
+				out.Verbose("Organized: %s -> %s", result.SourcePath, result.DestinationPath)
+			case "ROUTE_TO_REVIEW":
+				out.Verbose("For review: %s -> %s", result.SourcePath, result.DestinationPath)
+			case "SKIP":
+				out.Verbose("Skipped: %s (reason: %s)", result.SourcePath, result.ReasonCode)
+			}
+		}
+
+		if result == nil {
+			return false, false, nil
+		}
+
+		return result.EventType == "MOVE", result.EventType == "ROUTE_TO_REVIEW", nil
+	}
+
+	// Create the watcher
+	w := watcher.New(watcherCfg, fileHandler)
+
+	// Set up signal handling for graceful shutdown
+	// Requirements: 1.6 - Continue running until interrupted (Ctrl+C)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start watching
+	out.Info("Starting watch mode...")
+	out.Info("Monitoring %d inbound director%s:", len(cfg.InboundDirectories), pluralize(len(cfg.InboundDirectories), "y", "ies"))
+	for _, dir := range cfg.InboundDirectories {
+		out.Info("  - %s", dir)
+	}
+	out.Info("Debounce: %d seconds", watcherCfg.DebounceSeconds)
+	out.Info("Press Ctrl+C to stop")
+	out.Info("")
+
+	if err := w.Start(cfg.InboundDirectories); err != nil {
+		out.Error("Error starting watcher: %v", err)
+		return 1
+	}
+
+	// Wait for interrupt signal
+	// Requirements: 1.6 - Continue running until interrupted
+	<-sigChan
+
+	// Graceful shutdown
+	// Requirements: 1.7 - Gracefully shut down and display summary
+	out.Info("")
+	out.Info("Shutting down...")
+
+	summary := w.Stop()
+
+	// Display summary
+	// Requirements: 1.7 - Display summary when interrupted
+	out.Info("")
+	out.Info("Watch Session Summary")
+	out.Info("=====================")
+	out.Info("Duration: %s", formatDuration(summary.Duration))
+	out.Info("Files organized: %d", summary.FilesOrganized)
+	out.Info("Files for review: %d", summary.FilesReviewed)
+	out.Info("Files skipped: %d", summary.FilesSkipped)
+
+	return 0
+}
+
+// pluralize returns singular or plural suffix based on count.
+func pluralize(count int, singular, plural string) string {
+	if count == 1 {
+		return singular
+	}
+	return plural
+}
+
+// formatDuration formats a duration in a human-readable way.
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.1f seconds", d.Seconds())
+	}
+	if d < time.Hour {
+		minutes := int(d.Minutes())
+		seconds := int(d.Seconds()) % 60
+		return fmt.Sprintf("%d minute%s %d second%s", minutes, pluralize(minutes, "", "s"), seconds, pluralize(seconds, "", "s"))
+	}
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	return fmt.Sprintf("%d hour%s %d minute%s", hours, pluralize(hours, "", "s"), minutes, pluralize(minutes, "", "s"))
+}
+
 // parsePathMapping parses a path mapping string in the format "original:mapped".
 func parsePathMapping(s string) (audit.PathMapping, error) {
 	parts := strings.SplitN(s, ":", 2)
@@ -1360,15 +1674,21 @@ Subcommands:
   list                  List all runs with summary statistics
   show <run-id>         Show detailed events for a specific run
   export <run-id>       Export run audit data to a file
+  stats                 Display aggregate statistics across all runs
 
 Options for 'show':
   --type <event-type>   Filter events by type (e.g., MOVE, SKIP, ERROR)
+
+Options for 'stats':
+  --since <date>        Filter stats to runs after this date (format: 2024-01-01 or 2024-01-01T15:04:05)
 
 Examples:
   sorta audit list
   sorta audit show abc123-def456-...
   sorta audit show abc123-def456-... --type MOVE
-  sorta audit export abc123-def456-... output.json`)
+  sorta audit export abc123-def456-... output.json
+  sorta audit stats
+  sorta audit stats --since 2024-01-01`)
 }
 
 // printUndoUsage prints usage information for the undo command.
@@ -1399,6 +1719,7 @@ Commands:
   add-inbound <dir>     Add an inbound directory to configuration
   discover <dir>        Auto-discover prefix rules from existing directories
   run                   Execute file organization
+  watch                 Monitor directories and organize files automatically
   status                Show pending files across all inbound directories
   audit <subcommand>    View audit trail history
   undo [run-id]         Undo file operations from a run
@@ -1419,10 +1740,14 @@ Run Options:
   --depth N             Override scan depth (0 = immediate directory only)
   --dry-run             Preview what files would be moved without making changes
 
+Watch Options:
+  --debounce N          Override debounce period in seconds (default: 2)
+
 Audit Subcommands:
   audit list            List all runs with summary statistics
   audit show <run-id>   Show detailed events for a specific run
   audit export <run-id> Export run audit data to a file
+  audit stats           Display aggregate statistics across all runs
 
 Undo Options:
   --preview             Show what would be undone without making changes
@@ -1439,9 +1764,12 @@ Examples:
   sorta run                             Organize files according to configuration
   sorta run --depth 2                   Run with scan depth of 2 levels
   sorta run --dry-run                   Preview what files would be moved
+  sorta watch                           Start watching directories for new files
+  sorta watch --debounce 5              Watch with 5 second debounce period
   sorta status                          Show pending files in all inbound directories
   sorta -v status                       Show pending files with verbose file listing
   sorta -v run                          Run with verbose output
+  sorta -v watch                        Watch with verbose output
   sorta audit list                      List all audit runs
   sorta audit show <run-id>             Show details for a specific run
   sorta undo                            Undo most recent run
@@ -1455,7 +1783,12 @@ Config file format (JSON):
       { "prefix": "Invoice", "outboundDirectory": "/path/to/invoices" }
     ],
     "symlinkPolicy": "skip",
-    "scanDepth": 0
+    "scanDepth": 0,
+    "watch": {
+      "debounceSeconds": 2,
+      "stableThresholdMs": 1000,
+      "ignorePatterns": [".tmp", ".part", ".download"]
+    }
   }
 
 Files matching "<prefix> <YYYY-MM-DD> <description>" are moved to:
