@@ -51,6 +51,204 @@ type Options struct {
 	SymlinkPolicy    string             // Override symlink policy (empty = use config default)
 }
 
+// RunOptions configures the run operation for dry-run and verbose modes.
+// Requirements: 1.1, 1.2, 1.3 - Dry run mode configuration
+type RunOptions struct {
+	DryRun  bool // When true, simulate operations without modifying filesystem
+	Verbose bool // When true, show additional details about rule matching
+}
+
+// RunResult contains the results of a run operation.
+// Requirements: 1.2, 1.3, 1.6 - Dry run output and summary
+type RunResult struct {
+	Moved     []FileOperation // Files that would be/were moved to organized locations
+	ForReview []FileOperation // Files that would be/were routed to for-review directories
+	Skipped   []FileOperation // Files that were skipped (with reasons)
+	Errors    []error         // Errors encountered during processing
+}
+
+// FileOperation represents a planned or executed file operation.
+// Requirements: 1.2, 1.3, 3.1 - File operation details for preview output
+type FileOperation struct {
+	Source      string // Original file path
+	Destination string // Where the file would go or went
+	Prefix      string // Matched prefix (empty for for-review files)
+	Reason      string // Why skipped, if applicable
+}
+
+// RunDryRun executes or simulates file organization based on options.
+// When DryRun=true, it collects all planned operations without modifying the filesystem.
+// Requirements: 1.1, 1.4, 1.5 - Dry run mode that simulates without modifying filesystem
+func RunDryRun(configPath string, opts RunOptions) (*RunResult, error) {
+	return RunDryRunWithOptions(configPath, opts, nil)
+}
+
+// RunDryRunWithOptions executes or simulates file organization with optional configuration.
+// When DryRun=true, it skips directory creation, file moves, and audit logging.
+// Requirements: 1.1, 1.4, 1.5 - Dry run mode implementation
+func RunDryRunWithOptions(configPath string, opts RunOptions, options *Options) (*RunResult, error) {
+	// Load configuration
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	result := &RunResult{
+		Moved:     make([]FileOperation, 0),
+		ForReview: make([]FileOperation, 0),
+		Skipped:   make([]FileOperation, 0),
+		Errors:    make([]error, 0),
+	}
+
+	// Determine scan options
+	scanOpts := scanner.DefaultScanOptions()
+	scanOpts.MaxDepth = cfg.GetScanDepth()
+	scanOpts.SymlinkPolicy = cfg.GetSymlinkPolicy()
+
+	if options != nil {
+		if options.ScanDepth != nil {
+			scanOpts.MaxDepth = *options.ScanDepth
+		}
+		if options.SymlinkPolicy != "" {
+			scanOpts.SymlinkPolicy = options.SymlinkPolicy
+		}
+	}
+
+	// Scan all inbound directories and collect files
+	var allFiles []scanner.FileEntry
+	for _, sourceDir := range cfg.InboundDirectories {
+		// Runtime path validation: check if directory exists before scanning
+		if _, err := os.Stat(sourceDir); os.IsNotExist(err) {
+			result.Errors = append(result.Errors, fmt.Errorf("inbound directory does not exist: %s", sourceDir))
+			continue
+		}
+
+		files, err := scanner.ScanWithOptions(sourceDir, scanOpts)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("failed to scan %s: %w", sourceDir, err))
+			continue
+		}
+		allFiles = append(allFiles, files...)
+	}
+
+	// If not dry-run mode, delegate to the existing RunWithOptions
+	if !opts.DryRun {
+		summary, err := RunWithOptions(configPath, options)
+		if err != nil {
+			return nil, err
+		}
+		// Convert Summary to RunResult
+		return convertSummaryToRunResult(summary), nil
+	}
+
+	// Dry-run mode: collect operations without executing
+	// Requirements: 1.1, 1.4, 1.5 - No filesystem modifications, no audit logging
+	for _, file := range allFiles {
+		op := classifyFileOperation(file, cfg)
+		switch op.category {
+		case "moved":
+			result.Moved = append(result.Moved, op.operation)
+		case "for_review":
+			result.ForReview = append(result.ForReview, op.operation)
+		case "skipped":
+			result.Skipped = append(result.Skipped, op.operation)
+		case "error":
+			result.Errors = append(result.Errors, fmt.Errorf("error processing %s: %s", op.operation.Source, op.operation.Reason))
+		}
+	}
+
+	return result, nil
+}
+
+// classifiedOperation holds the result of classifying a file for dry-run
+type classifiedOperation struct {
+	category  string // "moved", "for_review", "skipped", "error"
+	operation FileOperation
+}
+
+// classifyFileOperation determines what would happen to a file without actually moving it.
+// This is used in dry-run mode to preview operations.
+func classifyFileOperation(file scanner.FileEntry, cfg *config.Configuration) classifiedOperation {
+	// Classify the file
+	classification := classifier.Classify(file.Name, cfg.PrefixRules)
+
+	if classification.IsUnclassified() {
+		// File would go to for-review directory
+		destDir := organizer.GetForReviewPath(filepath.Dir(file.FullPath))
+		destPath := filepath.Join(destDir, file.Name)
+
+		return classifiedOperation{
+			category: "for_review",
+			operation: FileOperation{
+				Source:      file.FullPath,
+				Destination: destPath,
+				Prefix:      "", // Empty for for-review files
+				Reason:      string(classification.Reason),
+			},
+		}
+	}
+
+	// File is classified - would be moved to organized location
+	prefix := extractPrefixFromNormalisedFilename(classification.NormalisedFilename)
+	subfolder := fmt.Sprintf("%d %s", classification.Year, prefix)
+	destDir := filepath.Join(classification.OutboundDirectory, subfolder)
+	destFilename := classification.NormalisedFilename
+
+	// Check if this would be a duplicate (file already exists at destination)
+	destPath := filepath.Join(destDir, destFilename)
+	if organizer.FileExists(destPath) {
+		// In dry-run, we predict the duplicate name
+		destFilename = organizer.GenerateDuplicateName(destDir, destFilename)
+		destPath = filepath.Join(destDir, destFilename)
+	}
+
+	return classifiedOperation{
+		category: "moved",
+		operation: FileOperation{
+			Source:      file.FullPath,
+			Destination: destPath,
+			Prefix:      prefix,
+			Reason:      "",
+		},
+	}
+}
+
+// convertSummaryToRunResult converts a Summary to a RunResult for non-dry-run mode.
+func convertSummaryToRunResult(summary *Summary) *RunResult {
+	result := &RunResult{
+		Moved:     make([]FileOperation, 0),
+		ForReview: make([]FileOperation, 0),
+		Skipped:   make([]FileOperation, 0),
+		Errors:    make([]error, 0),
+	}
+
+	for _, r := range summary.Results {
+		op := FileOperation{
+			Source:      r.SourcePath,
+			Destination: r.DestinationPath,
+			Reason:      r.ReasonCode,
+		}
+
+		switch r.EventType {
+		case "MOVE", "DUPLICATE_DETECTED":
+			result.Moved = append(result.Moved, op)
+		case "ROUTE_TO_REVIEW":
+			result.ForReview = append(result.ForReview, op)
+		case "SKIP":
+			result.Skipped = append(result.Skipped, op)
+		case "ERROR":
+			if r.Error != nil {
+				result.Errors = append(result.Errors, r.Error)
+			}
+		}
+	}
+
+	// Add scan errors
+	result.Errors = append(result.Errors, summary.ScanErrors...)
+
+	return result
+}
+
 // Run executes the Sorta file organization workflow.
 // It loads configuration, scans source directories, classifies files,
 // and organizes them according to the rules.

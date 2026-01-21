@@ -25,6 +25,7 @@ type ParseResult struct {
 	Verbose    bool
 	Validate   bool // For config --validate
 	Depth      int  // For run --depth N (-1 means not set)
+	DryRun     bool // For run --dry-run
 }
 
 // parseArgs parses command line arguments and extracts the command, command arguments, config path, and verbose flag.
@@ -126,6 +127,14 @@ func parseArgs(args []string) (ParseResult, error) {
 			continue
 		}
 
+		// --dry-run flag for run command
+		// Requirements: 1.1 - Dry run mode flag
+		if arg == "--dry-run" {
+			result.DryRun = true
+			i++
+			continue
+		}
+
 		// Not a recognized flag, add to command args
 		result.CmdArgs = append(result.CmdArgs, arg)
 		i++
@@ -195,7 +204,9 @@ func main() {
 	case "discover":
 		exitCode = runDiscoverCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "run":
-		exitCode = runRunCommand(parsed.ConfigPath, parsed.Verbose, parsed.Depth)
+		exitCode = runRunCommand(parsed.ConfigPath, parsed.Verbose, parsed.Depth, parsed.DryRun)
+	case "status":
+		exitCode = runStatusCommand(parsed.ConfigPath, parsed.Verbose)
 	case "audit":
 		exitCode = runAuditCommand(parsed.CmdArgs, parsed.Verbose)
 	case "undo":
@@ -494,11 +505,18 @@ func displayDiscoveryResult(result *discovery.DiscoveryResult) string {
 
 // runRunCommand executes the file organization workflow.
 // Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.5, 4.1, 4.2, 4.3, 4.4, 5.1 - verbose output, progress indicators, depth override, runtime validation
-func runRunCommand(configPath string, verbose bool, depthOverride int) int {
+// Requirements: 1.1, 1.2, 1.3, 1.6 - dry-run mode support
+func runRunCommand(configPath string, verbose bool, depthOverride int, dryRun bool) int {
 	// Create output instance with verbose config
 	outConfig := output.DefaultConfig()
 	outConfig.Verbose = verbose
 	out := output.New(outConfig)
+
+	// Handle dry-run mode
+	// Requirements: 1.1, 1.2, 1.3, 1.6 - Dry run mode that simulates without modifying filesystem
+	if dryRun {
+		return runDryRunMode(configPath, verbose, depthOverride, out)
+	}
 
 	// Load configuration to get audit settings
 	cfg, err := config.Load(configPath)
@@ -625,6 +643,75 @@ func runRunCommand(configPath string, verbose bool, depthOverride int) int {
 	if summary.HasErrors() {
 		return 1
 	}
+	return 0
+}
+
+// runDryRunMode executes the dry-run mode for the run command.
+// It simulates file organization without modifying the filesystem.
+// Requirements: 1.1, 1.2, 1.3, 1.6 - Dry run mode that simulates without modifying filesystem
+func runDryRunMode(configPath string, verbose bool, depthOverride int, out *output.Output) int {
+	// Build run options for dry-run mode
+	opts := orchestrator.RunOptions{
+		DryRun:  true,
+		Verbose: verbose,
+	}
+
+	// Build orchestrator options for depth override
+	var options *orchestrator.Options
+	if depthOverride >= 0 {
+		options = &orchestrator.Options{
+			ScanDepth: &depthOverride,
+		}
+	}
+
+	// Run dry-run mode
+	result, err := orchestrator.RunDryRunWithOptions(configPath, opts, options)
+	if err != nil {
+		out.Error("Error: %v", err)
+		return 1
+	}
+
+	// Print dry-run header
+	out.Info("Dry-run mode: No files will be modified")
+	out.Info("")
+
+	// Print dry-run results using output package
+	// Requirements: 1.2, 1.3 - Display each file that would be moved along with its destination path
+	out.PrintDryRunResult(result)
+
+	// Print summary
+	// Requirements: 1.6 - Display summary count of files that would be moved, reviewed, and skipped
+	out.PrintSummary(len(result.Moved), len(result.ForReview), len(result.Skipped))
+
+	// Return error code if there were any errors
+	if len(result.Errors) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// runStatusCommand executes the status command to show pending files.
+// It scans all configured inbound directories and displays files grouped by destination.
+// Requirements: 2.1, 2.5, 2.6 - Status command implementation
+func runStatusCommand(configPath string, verbose bool) int {
+	// Create output instance with verbose config
+	outConfig := output.DefaultConfig()
+	outConfig.Verbose = verbose
+	out := output.New(outConfig)
+
+	// Call orchestrator StatusFromPath to get status results
+	// Requirements: 2.1 - Scan all configured inbound directories
+	result, err := orchestrator.StatusFromPath(configPath)
+	if err != nil {
+		out.Error("Error: %v", err)
+		return 1
+	}
+
+	// Print status results using output package
+	// Requirements: 2.2, 2.3, 2.4, 2.5 - Display files grouped by destination with counts
+	// The PrintStatusResult method handles the empty directories case (Requirement 2.5)
+	out.PrintStatusResult(result)
+
 	return 0
 }
 
@@ -1193,6 +1280,7 @@ Commands:
   add-inbound <dir>     Add an inbound directory to configuration
   discover <dir>        Auto-discover prefix rules from existing directories
   run                   Execute file organization
+  status                Show pending files across all inbound directories
   audit <subcommand>    View audit trail history
   undo [run-id]         Undo file operations from a run
 
@@ -1206,6 +1294,7 @@ Config Options:
 
 Run Options:
   --depth N             Override scan depth (0 = immediate directory only)
+  --dry-run             Preview what files would be moved without making changes
 
 Audit Subcommands:
   audit list            List all runs with summary statistics
@@ -1223,6 +1312,9 @@ Examples:
   sorta discover /path/to/organized     Discover prefix rules from existing files
   sorta run                             Organize files according to configuration
   sorta run --depth 2                   Run with scan depth of 2 levels
+  sorta run --dry-run                   Preview what files would be moved
+  sorta status                          Show pending files in all inbound directories
+  sorta -v status                       Show pending files with verbose file listing
   sorta -v run                          Run with verbose output
   sorta audit list                      List all audit runs
   sorta audit show <run-id>             Show details for a specific run
