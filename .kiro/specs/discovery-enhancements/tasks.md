@@ -19,17 +19,12 @@ This implementation adds depth limiting and interactive mode to the discovery co
     - Default to -1 (unlimited) when not specified
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.6_
 
-  - [ ]* 1.3 Write property test for depth limiting
-    - **Property 1: Depth Limiting Correctness**
-    - **Validates: Requirements 1.1, 1.3, 1.4, 1.6**
-
-  - [ ]* 1.4 Write property test for unlimited depth default
-    - **Property 2: Unlimited Depth Default**
-    - **Validates: Requirements 1.2**
-
-  - [ ]* 1.5 Write property test for ISO-date skip at all depths
-    - **Property 3: ISO-Date Skip at All Depths**
-    - **Validates: Requirements 1.5**
+  - [ ] 1.3 Write unit tests for depth limiting
+    - Test depth=0 returns only root files
+    - Test depth=1 includes immediate subdirectories
+    - Test depth=-1 (unlimited) traverses all levels
+    - Test ISO-date directories skipped at all depths
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
 
 - [ ] 2. Implement Interactive Discovery Mode
   - [ ] 2.1 Create interactive prompter component
@@ -44,17 +39,14 @@ This implementation adds depth limiting and interactive mode to the discovery co
     - Fall back to non-interactive with warning when not TTY
     - _Requirements: 2.7_
 
-  - [ ]* 2.3 Write property test for interactive prompt content
-    - **Property 4: Interactive Prompt Content**
-    - **Validates: Requirements 2.1, 2.2**
-
-  - [ ]* 2.4 Write property test for accept/reject behavior
-    - **Property 5: Interactive Accept/Reject Behavior**
-    - **Validates: Requirements 2.3, 2.4**
-
-  - [ ]* 2.5 Write property test for non-interactive auto-add
-    - **Property 6: Non-Interactive Auto-Add**
-    - **Validates: Requirements 2.6**
+  - [ ] 2.3 Write unit tests for interactive prompter
+    - Test prompt displays prefix and target directory
+    - Test accept adds rule to config
+    - Test reject skips rule
+    - Test accept-all adds remaining rules
+    - Test reject-all skips remaining rules
+    - Test non-interactive mode auto-adds all rules
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6_
 
 - [ ] 3. Update CLI for Discovery Options
   - [ ] 3.1 Add --depth flag to discover command
@@ -69,15 +61,18 @@ This implementation adds depth limiting and interactive mode to the discovery co
     - Invoke interactive prompter for each rule
     - _Requirements: 2.1, 2.7_
 
-  - [ ]* 3.3 Write property test for combined flags
-    - **Property 7: Combined Flags Behavior**
-    - **Validates: Requirements 3.1, 3.2**
+  - [ ] 3.3 Write unit tests for CLI flag parsing
+    - Test --depth with valid values
+    - Test --depth with invalid values returns error
+    - Test --interactive enables interactive mode
+    - Test combined --depth and --interactive
+    - _Requirements: 3.1, 3.2_
 
 - [ ] 4. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
 
-- Tasks marked with `*` are property-based tests
 - Depth limiting is applied during the walk, not post-filtering
 - Interactive mode uses stdin/stdout for prompts
+- Unit tests with specific examples provide sufficient coverage for this feature

@@ -31,13 +31,12 @@ This implementation adds shell completion scripts and an interactive init wizard
     - Include descriptions for commands and flags
     - _Requirements: 1.3, 1.6_
 
-  - [ ]* 1.5 Write property test for completion validity
-    - **Property 1: Completion Script Validity**
-    - **Validates: Requirements 1.1, 1.2, 1.3**
-
-  - [ ]* 1.6 Write property test for completion coverage
-    - **Property 2: Completion Coverage**
-    - **Validates: Requirements 1.4, 1.5, 1.6**
+  - [ ] 1.5 Write unit tests for completion generator
+    - Test bash completion includes all commands and flags
+    - Test zsh completion includes descriptions
+    - Test fish completion uses correct format
+    - Test path arguments get file completion
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
 
 - [ ] 2. Implement Init Wizard
   - [ ] 2.1 Create wizard component
@@ -59,13 +58,13 @@ This implementation adds shell completion scripts and an interactive init wizard
     - Display next steps on completion
     - _Requirements: 3.5, 3.6, 3.7_
 
-  - [ ]* 2.4 Write property test for wizard prompts
-    - **Property 3: Init Wizard Prompts**
-    - **Validates: Requirements 3.2, 3.3, 3.4**
-
-  - [ ]* 2.5 Write property test for config creation
-    - **Property 4: Init Config Creation**
-    - **Validates: Requirements 3.5, 3.6**
+  - [ ] 2.4 Write unit tests for wizard
+    - Test prompts collect inbound directories
+    - Test prompts collect prefix rules with outbound directories
+    - Test config path prompt with default value
+    - Test existing config prompts for overwrite/merge
+    - Test config file is written correctly
+    - _Requirements: 3.2, 3.3, 3.4, 3.5, 3.6_
 
 - [ ] 3. Implement Discovery Integration in Wizard
   - [ ] 3.1 Add discovery option to wizard
@@ -75,9 +74,11 @@ This implementation adds shell completion scripts and an interactive init wizard
     - Allow selection of rules to include
     - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-  - [ ]* 3.2 Write property test for discovery integration
-    - **Property 5: Init Discovery Integration**
-    - **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
+  - [ ] 3.2 Write unit tests for discovery integration
+    - Test discovery option is offered
+    - Test discovered rules are displayed
+    - Test user can select which rules to include
+    - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
 - [ ] 4. Update CLI
   - [ ] 4.1 Add completion command
@@ -105,6 +106,6 @@ This implementation adds shell completion scripts and an interactive init wizard
 
 ## Notes
 
-- Tasks marked with `*` are property-based tests
 - Completion scripts should be tested by parsing, not by running in actual shells
 - Wizard tests use simulated stdin/stdout
+- Unit tests with specific examples provide sufficient coverage for UI/wizard behavior

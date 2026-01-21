@@ -33,21 +33,13 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Support configurable patterns
     - _Requirements: 1.8_
 
-  - [ ]* 1.5 Write property test for watch and organize
-    - **Property 1: Watch Monitors and Organizes**
-    - **Validates: Requirements 1.1, 1.2**
-
-  - [ ]* 1.6 Write property test for debounce and stability
-    - **Property 2: Debounce and Stability**
-    - **Validates: Requirements 1.3, 1.4**
-
-  - [ ]* 1.7 Write property test for audit logging
-    - **Property 3: Watch Audit Logging**
-    - **Validates: Requirements 1.5**
-
-  - [ ]* 1.8 Write property test for temp file filtering
-    - **Property 4: Temporary File Filtering**
-    - **Validates: Requirements 1.8**
+  - [ ] 1.5 Write unit tests for watcher
+    - Test new file triggers organization
+    - Test rapid events are debounced
+    - Test file processed after size stabilizes
+    - Test .tmp, .part, .download files are ignored
+    - Test audit events logged for each operation
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.8_
 
 - [ ] 2. Add Watch Configuration
   - [ ] 2.1 Add watch config to configuration
@@ -56,9 +48,12 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Implement defaults (debounce: 2s, stability: 1000ms)
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ]* 2.2 Write property test for watch configuration
-    - **Property 5: Watch Configuration**
-    - **Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5**
+  - [ ] 2.2 Write unit tests for watch configuration
+    - Test default debounce is 2s
+    - Test default stability is 1000ms
+    - Test custom values override defaults
+    - Test ignore patterns are applied
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
 - [ ] 3. Implement Run Summary
   - [ ] 3.1 Create summary generator
@@ -78,13 +73,14 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Display using output package
     - _Requirements: 3.1_
 
-  - [ ]* 3.4 Write property test for run summary
-    - **Property 6: Run Summary Statistics**
-    - **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
-
-  - [ ]* 3.5 Write property test for verbose breakdown
-    - **Property 7: Verbose Summary Breakdown**
-    - **Validates: Requirements 3.6**
+  - [ ] 3.4 Write unit tests for run summary
+    - Test moved count matches actual moves
+    - Test for-review count matches routed files
+    - Test skipped count matches skipped files
+    - Test error count matches failures
+    - Test duration is calculated correctly
+    - Test verbose mode includes per-prefix breakdown
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
 - [ ] 4. Implement Audit Statistics
   - [ ] 4.1 Create stats aggregator
@@ -104,8 +100,13 @@ This implementation adds file system watching, run summaries, and audit statisti
     - Only include runs after specified time
     - _Requirements: 4.7_
 
-  - [ ]* 4.4 Write property test for stats aggregation
-    - **Property 8: Audit Stats Aggregation**
+  - [ ] 4.4 Write property test for stats aggregation
+    - **Property: Stats Totals Equal Sum of Parts**
+    - Generate audit logs with random events
+    - Verify total organized equals sum of per-prefix counts
+    - Verify total for-review equals sum across runs
+    - Verify --since filtering excludes older runs
+    - _Rationale: Mathematical invariant - aggregated totals must equal sum of components_
     - **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7**
 
 - [ ] 5. Update CLI
@@ -128,7 +129,8 @@ This implementation adds file system watching, run summaries, and audit statisti
 
 ## Notes
 
-- Tasks marked with `*` are property-based tests
 - Watch mode uses fsnotify library for cross-platform file watching
 - Debounce and stability checks prevent processing incomplete files
 - Stats aggregation reads all audit log files in the configured directory
+- Property test retained for stats aggregation (mathematical invariant: totals = sum of parts)
+- Unit tests used elsewhere as examples provide sufficient coverage

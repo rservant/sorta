@@ -21,8 +21,12 @@ This implementation adds preview capabilities through a `--dry-run` flag for the
     - Return `RunResult` with all planned operations
     - _Requirements: 1.1, 1.4, 1.5_
 
-  - [ ]* 1.3 Write property test for filesystem immutability
-    - **Property 1: Dry-Run Filesystem Immutability**
+  - [ ] 1.3 Write property test for filesystem immutability
+    - **Property: Dry-Run Filesystem Immutability**
+    - Generate random file sets and configurations
+    - Verify no files created, moved, or deleted in dry-run mode
+    - Verify no audit log entries written
+    - _Rationale: Universal invariant - dry-run must never modify filesystem_
     - **Validates: Requirements 1.1, 1.4, 1.5, 2.6**
 
 - [ ] 2. Implement Status Command
@@ -33,9 +37,12 @@ This implementation adds preview capabilities through a `--dry-run` flag for the
     - Calculate per-directory and grand totals
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ]* 2.2 Write property test for status grouping and counts
-    - **Property 3: Status Grouping and Counts**
-    - **Validates: Requirements 2.2, 2.3, 2.4, 3.2**
+  - [ ] 2.2 Write unit tests for status grouping and counts
+    - Test files grouped by matching prefix
+    - Test unmatched files grouped under for-review
+    - Test per-directory counts are accurate
+    - Test grand total equals sum of all groups
+    - _Requirements: 2.2, 2.3, 2.4, 3.2_
 
 - [ ] 3. Add Output Formatting
   - [ ] 3.1 Add preview output methods to output package
@@ -45,13 +52,11 @@ This implementation adds preview capabilities through a `--dry-run` flag for the
     - Format source → destination for each file
     - _Requirements: 3.1, 3.2, 1.6_
 
-  - [ ]* 3.2 Write property test for output completeness
-    - **Property 2: Dry-Run Output Completeness**
-    - **Validates: Requirements 1.2, 1.3, 3.1**
-
-  - [ ]* 3.3 Write property test for summary accuracy
-    - **Property 4: Summary Count Accuracy**
-    - **Validates: Requirements 1.6**
+  - [ ] 3.2 Write unit tests for output formatting
+    - Test each planned operation appears in output
+    - Test source → destination format is correct
+    - Test summary counts match operation counts
+    - _Requirements: 1.2, 1.3, 1.6, 3.1_
 
 - [ ] 4. Update CLI
   - [ ] 4.1 Add --dry-run flag to run command
@@ -67,15 +72,17 @@ This implementation adds preview capabilities through a `--dry-run` flag for the
     - Handle empty directories case
     - _Requirements: 2.1, 2.5, 2.6_
 
-  - [ ]* 4.3 Write property test for verbose mode detail
-    - **Property 5: Verbose Mode Additional Detail**
-    - **Validates: Requirements 3.4**
+  - [ ] 4.3 Write unit tests for verbose mode
+    - Test verbose output includes additional file details
+    - Test non-verbose output is concise
+    - _Requirements: 3.4_
 
 - [ ] 5. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
 
-- Tasks marked with `*` are property-based tests
 - The dry-run mode reuses existing classification logic but skips execution
 - Status command is read-only and shares classification with dry-run
+- Property test retained for filesystem immutability (universal invariant)
+- Unit tests used for output formatting and counts (examples suffice)
