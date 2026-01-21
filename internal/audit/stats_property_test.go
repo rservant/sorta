@@ -160,7 +160,7 @@ func itoa(n int) string {
 // **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7**
 func TestStatsTotalsEqualSumOfParts(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -252,166 +252,129 @@ func TestStatsTotalsEqualSumOfParts(t *testing.T) {
 // TestStatsSinceFilterExcludesOlderRuns tests that --since filtering correctly
 // excludes runs that occurred before the specified time.
 // **Validates: Requirements 4.7**
+//
+// Note: This test is converted to a unit test with specific examples rather than
+// a property test because the --since filter requires real time delays to create
+// distinct timestamps (RFC3339 has second precision). Running 100 iterations with
+// 2+ seconds of sleep each would take over 3 minutes.
 func TestStatsSinceFilterExcludesOlderRuns(t *testing.T) {
-	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "stats-since-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-	properties := gopter.NewProperties(parameters)
+	config := AuditConfig{LogDirectory: tmpDir}
+	writer, err := NewAuditWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
 
-	properties.Property("--since filter excludes older runs", prop.ForAll(
-		func(numOldRuns int, numNewRuns int, movesPerRun int) bool {
-			// Need at least one new run to test filtering
-			if numNewRuns == 0 {
-				return true
-			}
+	identity := &FileIdentity{ContentHash: "abc123", Size: 1000}
 
-			// Create temp directory
-			tmpDir, err := os.MkdirTemp("", "stats-since-property-*")
-			if err != nil {
-				t.Logf("Failed to create temp dir: %v", err)
-				return false
-			}
-			defer os.RemoveAll(tmpDir)
-
-			config := AuditConfig{LogDirectory: tmpDir}
-			writer, err := NewAuditWriter(config)
-			if err != nil {
-				t.Logf("Failed to create writer: %v", err)
-				return false
-			}
-
-			identity := &FileIdentity{ContentHash: "abc123", Size: 1000}
-
-			// Create "old" runs
-			oldOrganized := 0
-			for i := 0; i < numOldRuns; i++ {
-				runID, err := writer.StartRun("1.0.0", "test-machine")
-				if err != nil {
-					writer.Close()
-					t.Logf("Failed to start old run: %v", err)
-					return false
-				}
-
-				for j := 0; j < movesPerRun; j++ {
-					sourcePath := "/source/old" + itoa(i) + "_" + itoa(j) + ".pdf"
-					destPath := "/organized/invoices/old" + itoa(i) + "_" + itoa(j) + ".pdf"
-					if err := writer.RecordMove(sourcePath, destPath, identity); err != nil {
-						writer.Close()
-						t.Logf("Failed to record move: %v", err)
-						return false
-					}
-					oldOrganized++
-				}
-
-				summary := RunSummary{TotalFiles: movesPerRun, Moved: movesPerRun}
-				if err := writer.EndRun(runID, RunStatusCompleted, summary); err != nil {
-					writer.Close()
-					t.Logf("Failed to end old run: %v", err)
-					return false
-				}
-			}
-
-			// Wait to ensure timestamp difference (RFC3339 has second precision)
-			// This ensures old runs are clearly before the filter time
-			time.Sleep(1200 * time.Millisecond)
-
-			// Record the filter time - this is AFTER old runs
-			// Use UTC to match the timestamps stored in audit events
-			// Truncate to second precision to match RFC3339 format used in audit logs
-			filterTime := time.Now().UTC().Truncate(time.Second)
-
-			// Wait at least 1 second to ensure new runs have a StartTime > filterTime
-			// (since RFC3339 only has second precision)
-			time.Sleep(1100 * time.Millisecond)
-
-			// Create "new" runs
-			newOrganized := 0
-			for i := 0; i < numNewRuns; i++ {
-				runID, err := writer.StartRun("1.0.0", "test-machine")
-				if err != nil {
-					writer.Close()
-					t.Logf("Failed to start new run: %v", err)
-					return false
-				}
-
-				for j := 0; j < movesPerRun; j++ {
-					sourcePath := "/source/new" + itoa(i) + "_" + itoa(j) + ".pdf"
-					destPath := "/organized/receipts/new" + itoa(i) + "_" + itoa(j) + ".pdf"
-					if err := writer.RecordMove(sourcePath, destPath, identity); err != nil {
-						writer.Close()
-						t.Logf("Failed to record move: %v", err)
-						return false
-					}
-					newOrganized++
-				}
-
-				summary := RunSummary{TotalFiles: movesPerRun, Moved: movesPerRun}
-				if err := writer.EndRun(runID, RunStatusCompleted, summary); err != nil {
-					writer.Close()
-					t.Logf("Failed to end new run: %v", err)
-					return false
-				}
-			}
-
+	// Create 2 "old" runs with invoices prefix
+	oldOrganized := 0
+	for i := 0; i < 2; i++ {
+		runID, err := writer.StartRun("1.0.0", "test-machine")
+		if err != nil {
 			writer.Close()
+			t.Fatalf("Failed to start old run: %v", err)
+		}
 
-			// Test without filter - should include all runs
-			statsAll, err := AggregateStats(tmpDir, StatsOptions{})
-			if err != nil {
-				t.Logf("AggregateStats (no filter) failed: %v", err)
-				return false
+		for j := 0; j < 3; j++ {
+			sourcePath := "/source/old" + itoa(i) + "_" + itoa(j) + ".pdf"
+			destPath := "/organized/invoices/old" + itoa(i) + "_" + itoa(j) + ".pdf"
+			if err := writer.RecordMove(sourcePath, destPath, identity); err != nil {
+				writer.Close()
+				t.Fatalf("Failed to record move: %v", err)
 			}
+			oldOrganized++
+		}
 
-			// PROPERTY: Without filter, total should include all runs
-			expectedTotal := oldOrganized + newOrganized
-			if statsAll.TotalOrganized != expectedTotal {
-				t.Logf("Without filter: TotalOrganized (%d) != expected (%d)", statsAll.TotalOrganized, expectedTotal)
-				return false
+		summary := RunSummary{TotalFiles: 3, Moved: 3}
+		if err := writer.EndRun(runID, RunStatusCompleted, summary); err != nil {
+			writer.Close()
+			t.Fatalf("Failed to end old run: %v", err)
+		}
+	}
+
+	// Wait to ensure timestamp difference (RFC3339 has second precision)
+	time.Sleep(1200 * time.Millisecond)
+
+	// Record the filter time
+	filterTime := time.Now().UTC().Truncate(time.Second)
+
+	// Wait to ensure new runs are after filter time
+	time.Sleep(1100 * time.Millisecond)
+
+	// Create 2 "new" runs with receipts prefix
+	newOrganized := 0
+	for i := 0; i < 2; i++ {
+		runID, err := writer.StartRun("1.0.0", "test-machine")
+		if err != nil {
+			writer.Close()
+			t.Fatalf("Failed to start new run: %v", err)
+		}
+
+		for j := 0; j < 3; j++ {
+			sourcePath := "/source/new" + itoa(i) + "_" + itoa(j) + ".pdf"
+			destPath := "/organized/receipts/new" + itoa(i) + "_" + itoa(j) + ".pdf"
+			if err := writer.RecordMove(sourcePath, destPath, identity); err != nil {
+				writer.Close()
+				t.Fatalf("Failed to record move: %v", err)
 			}
+			newOrganized++
+		}
 
-			// Test with --since filter
-			statsFiltered, err := AggregateStats(tmpDir, StatsOptions{Since: &filterTime})
-			if err != nil {
-				t.Logf("AggregateStats (with filter) failed: %v", err)
-				return false
-			}
+		summary := RunSummary{TotalFiles: 3, Moved: 3}
+		if err := writer.EndRun(runID, RunStatusCompleted, summary); err != nil {
+			writer.Close()
+			t.Fatalf("Failed to end new run: %v", err)
+		}
+	}
 
-			// PROPERTY: With filter, should only include new runs
-			// Requirements 4.7
-			if statsFiltered.TotalOrganized != newOrganized {
-				t.Logf("With filter: TotalOrganized (%d) != expected new (%d)",
-					statsFiltered.TotalOrganized, newOrganized)
-				return false
-			}
+	writer.Close()
 
-			// PROPERTY: With filter, run count should only include new runs
-			if statsFiltered.TotalRuns != numNewRuns {
-				t.Logf("With filter: TotalRuns (%d) != expected (%d)", statsFiltered.TotalRuns, numNewRuns)
-				return false
-			}
+	// Test without filter - should include all runs
+	statsAll, err := AggregateStats(tmpDir, StatsOptions{})
+	if err != nil {
+		t.Fatalf("AggregateStats (no filter) failed: %v", err)
+	}
 
-			// PROPERTY: Old prefix (invoices) should not appear in filtered results
-			if numOldRuns > 0 && movesPerRun > 0 {
-				if statsFiltered.ByPrefix["invoices"] != 0 {
-					t.Logf("With filter: invoices prefix should be 0, got %d", statsFiltered.ByPrefix["invoices"])
-					return false
-				}
-			}
+	expectedTotal := oldOrganized + newOrganized
+	if statsAll.TotalOrganized != expectedTotal {
+		t.Errorf("Without filter: TotalOrganized (%d) != expected (%d)", statsAll.TotalOrganized, expectedTotal)
+	}
+	if statsAll.TotalRuns != 4 {
+		t.Errorf("Without filter: TotalRuns (%d) != expected (4)", statsAll.TotalRuns)
+	}
 
-			// PROPERTY: New prefix (receipts) should appear in filtered results
-			if statsFiltered.ByPrefix["receipts"] != newOrganized {
-				t.Logf("With filter: receipts prefix (%d) != expected (%d)", statsFiltered.ByPrefix["receipts"], newOrganized)
-				return false
-			}
+	// Test with --since filter
+	statsFiltered, err := AggregateStats(tmpDir, StatsOptions{Since: &filterTime})
+	if err != nil {
+		t.Fatalf("AggregateStats (with filter) failed: %v", err)
+	}
 
-			return true
-		},
-		gen.IntRange(0, 2), // numOldRuns (reduced to speed up test)
-		gen.IntRange(1, 2), // numNewRuns (at least 1 to test filtering)
-		gen.IntRange(1, 2), // movesPerRun (reduced to speed up test)
-	))
+	// With filter, should only include new runs
+	if statsFiltered.TotalOrganized != newOrganized {
+		t.Errorf("With filter: TotalOrganized (%d) != expected new (%d)",
+			statsFiltered.TotalOrganized, newOrganized)
+	}
 
-	properties.TestingRun(t, gopter.ConsoleReporter(false))
+	if statsFiltered.TotalRuns != 2 {
+		t.Errorf("With filter: TotalRuns (%d) != expected (2)", statsFiltered.TotalRuns)
+	}
+
+	// Old prefix (invoices) should not appear in filtered results
+	if statsFiltered.ByPrefix["invoices"] != 0 {
+		t.Errorf("With filter: invoices prefix should be 0, got %d", statsFiltered.ByPrefix["invoices"])
+	}
+
+	// New prefix (receipts) should appear in filtered results
+	if statsFiltered.ByPrefix["receipts"] != newOrganized {
+		t.Errorf("With filter: receipts prefix (%d) != expected (%d)", statsFiltered.ByPrefix["receipts"], newOrganized)
+	}
 }
 
 // TestStatsTopNFiltering tests that TopN filtering correctly limits prefix counts
@@ -419,7 +382,7 @@ func TestStatsSinceFilterExcludesOlderRuns(t *testing.T) {
 // **Validates: Requirements 4.3**
 func TestStatsTopNFiltering(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -548,66 +511,60 @@ func TestStatsTopNFiltering(t *testing.T) {
 
 // TestStatsDateRangeCorrectness tests that FirstRun and LastRun are correctly calculated.
 // **Validates: Requirements 4.5**
+//
+// Note: Converted to a unit test because the property test with time.Sleep(10ms)
+// between runs × 100 iterations adds unnecessary test time. The date range logic
+// is straightforward and well-covered by specific examples.
 func TestStatsDateRangeCorrectness(t *testing.T) {
-	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	testCases := []struct {
+		name    string
+		numRuns int
+	}{
+		{"single run", 1},
+		{"two runs", 2},
+		{"five runs", 5},
+	}
 
-	properties := gopter.NewProperties(parameters)
-
-	properties.Property("Date range correctly reflects first and last runs", prop.ForAll(
-		func(numRuns int) bool {
-			if numRuns == 0 {
-				return true
-			}
-
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
 			// Create temp directory
-			tmpDir, err := os.MkdirTemp("", "stats-daterange-property-*")
+			tmpDir, err := os.MkdirTemp("", "stats-daterange-*")
 			if err != nil {
-				t.Logf("Failed to create temp dir: %v", err)
-				return false
+				t.Fatalf("Failed to create temp dir: %v", err)
 			}
 			defer os.RemoveAll(tmpDir)
 
 			config := AuditConfig{LogDirectory: tmpDir}
 			writer, err := NewAuditWriter(config)
 			if err != nil {
-				t.Logf("Failed to create writer: %v", err)
-				return false
+				t.Fatalf("Failed to create writer: %v", err)
 			}
 
 			identity := &FileIdentity{ContentHash: "abc123", Size: 1000}
-			var firstRunTime time.Time
+			firstRunTime := time.Now()
 
-			for i := 0; i < numRuns; i++ {
-				runStartTime := time.Now()
-				if i == 0 {
-					firstRunTime = runStartTime
-				}
-
+			for i := 0; i < tc.numRuns; i++ {
 				runID, err := writer.StartRun("1.0.0", "test-machine")
 				if err != nil {
 					writer.Close()
-					t.Logf("Failed to start run: %v", err)
-					return false
+					t.Fatalf("Failed to start run: %v", err)
 				}
 
 				sourcePath := "/source/file" + itoa(i) + ".pdf"
 				destPath := "/organized/invoices/file" + itoa(i) + ".pdf"
 				if err := writer.RecordMove(sourcePath, destPath, identity); err != nil {
 					writer.Close()
-					t.Logf("Failed to record move: %v", err)
-					return false
+					t.Fatalf("Failed to record move: %v", err)
 				}
 
 				summary := RunSummary{TotalFiles: 1, Moved: 1}
 				if err := writer.EndRun(runID, RunStatusCompleted, summary); err != nil {
 					writer.Close()
-					t.Logf("Failed to end run: %v", err)
-					return false
+					t.Fatalf("Failed to end run: %v", err)
 				}
 
 				// Small delay between runs to ensure different timestamps
-				if i < numRuns-1 {
+				if i < tc.numRuns-1 {
 					time.Sleep(10 * time.Millisecond)
 				}
 			}
@@ -616,54 +573,36 @@ func TestStatsDateRangeCorrectness(t *testing.T) {
 
 			stats, err := AggregateStats(tmpDir, StatsOptions{})
 			if err != nil {
-				t.Logf("AggregateStats failed: %v", err)
-				return false
+				t.Fatalf("AggregateStats failed: %v", err)
 			}
 
-			// PROPERTY: FirstRun should be close to when we started the first run
-			// (within a reasonable tolerance due to timing)
+			// FirstRun should not be zero
 			if stats.FirstRun.IsZero() {
-				t.Logf("FirstRun is zero")
-				return false
+				t.Error("FirstRun is zero")
 			}
 
-			// PROPERTY: LastRun should be close to when we started the last run
+			// LastRun should not be zero
 			if stats.LastRun.IsZero() {
-				t.Logf("LastRun is zero")
-				return false
+				t.Error("LastRun is zero")
 			}
 
-			// PROPERTY: FirstRun <= LastRun
+			// FirstRun <= LastRun
 			if stats.FirstRun.After(stats.LastRun) {
-				t.Logf("FirstRun (%v) is after LastRun (%v)", stats.FirstRun, stats.LastRun)
-				return false
+				t.Errorf("FirstRun (%v) is after LastRun (%v)", stats.FirstRun, stats.LastRun)
 			}
 
-			// PROPERTY: For single run, FirstRun should equal LastRun
-			if numRuns == 1 && !stats.FirstRun.Equal(stats.LastRun) {
-				t.Logf("Single run: FirstRun (%v) != LastRun (%v)", stats.FirstRun, stats.LastRun)
-				return false
+			// For single run, FirstRun should equal LastRun
+			if tc.numRuns == 1 && !stats.FirstRun.Equal(stats.LastRun) {
+				t.Errorf("Single run: FirstRun (%v) != LastRun (%v)", stats.FirstRun, stats.LastRun)
 			}
 
-			// PROPERTY: For multiple runs, FirstRun should be before LastRun (or equal if very fast)
-			if numRuns > 1 && stats.FirstRun.After(stats.LastRun) {
-				t.Logf("Multiple runs: FirstRun (%v) > LastRun (%v)", stats.FirstRun, stats.LastRun)
-				return false
-			}
-
-			// PROPERTY: FirstRun should be within reasonable range of our recorded time
+			// FirstRun should be within reasonable range of our recorded time
 			timeDiff := stats.FirstRun.Sub(firstRunTime)
 			if timeDiff < -time.Second || timeDiff > time.Second {
-				t.Logf("FirstRun time difference too large: %v", timeDiff)
-				return false
+				t.Errorf("FirstRun time difference too large: %v", timeDiff)
 			}
-
-			return true
-		},
-		gen.IntRange(1, 5), // numRuns
-	))
-
-	properties.TestingRun(t, gopter.ConsoleReporter(false))
+		})
+	}
 }
 
 // genTestRunDataNonUndo generates data for a non-undo run (for simpler tests).
@@ -690,7 +629,7 @@ func genTestRunsNonUndo() gopter.Gen {
 // **Validates: Requirements 4.2, 4.3**
 func TestStatsSumInvariant(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

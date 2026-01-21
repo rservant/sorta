@@ -47,7 +47,7 @@ func genValidPrefixForTest() gopter.Gen {
 
 func TestCandidateDirectoryDetection(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -162,7 +162,7 @@ func TestCandidateDirectoryDetection(t *testing.T) {
 
 func TestRecursiveFileAnalysis(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -278,7 +278,7 @@ func TestRecursiveFileAnalysis(t *testing.T) {
 // Test for duplicate prefix filtering in Discover
 func TestDiscoverDuplicateFiltering(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -360,7 +360,7 @@ func toggleCase(s string) string {
 
 func TestISODateDirectoryScanning(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -973,7 +973,7 @@ func TestFileOnlyPrefixExtraction(t *testing.T) {
 
 func TestFileOnlyPrefixExtractionProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

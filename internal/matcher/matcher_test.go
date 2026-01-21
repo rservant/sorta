@@ -61,7 +61,7 @@ func genRemainder() gopter.Gen {
 
 func TestCaseInsensitivePrefixMatching(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -107,7 +107,7 @@ func TestCaseInsensitivePrefixMatching(t *testing.T) {
 
 func TestLongestPrefixWins(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

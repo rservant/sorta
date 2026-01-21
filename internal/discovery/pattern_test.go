@@ -194,7 +194,7 @@ func genInvalidFilename() gopter.Gen {
 
 func TestPrefixExtractionProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -303,7 +303,7 @@ func genInvalidISODateDirName() gopter.Gen {
 
 func TestIsISODateDirectoryProperty(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

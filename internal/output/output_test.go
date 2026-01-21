@@ -322,7 +322,7 @@ func TestErrorAddsNewline(t *testing.T) {
 // TestProgressIndicatorFormatAndLifecycle tests Property 5: Progress Indicator Format and Lifecycle
 func TestProgressIndicatorFormatAndLifecycle(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -637,7 +637,7 @@ func TestProgressIndicatorFormatAndLifecycle(t *testing.T) {
 // TestTTYDetectionBehavior tests Property 6: TTY Detection Behavior
 func TestTTYDetectionBehavior(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

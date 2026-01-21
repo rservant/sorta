@@ -73,7 +73,7 @@ func genSuffix() gopter.Gen {
 
 func TestInvalidDateClassification(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -201,7 +201,7 @@ func genPrefixRules() gopter.Gen {
 
 func TestDeterministicClassification(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

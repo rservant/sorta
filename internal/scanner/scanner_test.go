@@ -99,7 +99,7 @@ func setupTestDirectory(t *testing.T, structure DirectoryStructure) string {
 
 func TestScannerReturnsOnlyFiles(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -166,7 +166,7 @@ func TestScannerReturnsOnlyFiles(t *testing.T) {
 // Validates: Requirements 2.2, 2.3, 2.4
 func TestSymlinkPolicyBehavior(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

@@ -76,6 +76,28 @@ Sorta uses subcommands for different operations:
 
 The `-v`/`--verbose` flag can be combined with any command to show detailed progress information during execution.
 
+### Watch Mode
+
+Monitor directories and automatically organize files as they arrive:
+
+```bash
+# Start watching configured inbound directories
+./sorta watch
+
+# Override debounce period (seconds to wait after file activity settles)
+./sorta watch --debounce 5
+
+# Watch with verbose output
+./sorta -v watch
+```
+
+Watch mode:
+- Monitors all configured inbound directories for new files
+- Waits for files to finish writing (debounce + stability check)
+- Automatically organizes files according to your rules
+- Ignores temporary files (.tmp, .part, .download, etc.)
+- Displays a summary when stopped (Ctrl+C)
+
 ### Check Status
 
 See pending files across all inbound directories without making changes:
@@ -177,6 +199,12 @@ Sorta maintains a complete audit trail of all file operations, enabling review a
 
 # Export a run's audit data to a file
 ./sorta audit export <run-id> --output audit-export.json
+
+# View aggregate statistics across all runs
+./sorta audit stats
+
+# Filter stats to a specific time period
+./sorta audit stats --since 2024-01-01
 ```
 
 ### Undo Operations
@@ -213,6 +241,11 @@ Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`-
     { "prefix": "Receipt", "outboundDirectory": "/Users/me/Documents/Receipts" },
     { "prefix": "Statement", "outboundDirectory": "/Users/me/Documents/Statements" }
   ],
+  "watch": {
+    "debounceSeconds": 2,
+    "stableThresholdMs": 1000,
+    "ignorePatterns": [".tmp", ".part", ".download"]
+  },
   "audit": {
     "logDirectory": ".sorta/audit",
     "rotationSizeBytes": 10485760,
@@ -229,6 +262,9 @@ Sorta uses `sorta-config.json` by default, or specify a custom path with `-c`/`-
 |-------|-------------|
 | `inboundDirectories` | Directories to scan for files |
 | `prefixRules` | List of prefix-to-outbound mappings |
+| `watch.debounceSeconds` | Seconds to wait after file activity before processing (default: 2) |
+| `watch.stableThresholdMs` | Milliseconds file size must be stable before processing (default: 1000) |
+| `watch.ignorePatterns` | File patterns to ignore in watch mode (default: .tmp, .part, .download) |
 | `audit.logDirectory` | Directory for audit log files (default: `.sorta/audit`) |
 | `audit.rotationSizeBytes` | Rotate log when it exceeds this size (default: 10MB) |
 | `audit.rotationPeriod` | Time-based rotation: `daily`, `weekly`, or empty (default: `daily`) |

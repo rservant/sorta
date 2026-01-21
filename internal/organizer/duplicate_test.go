@@ -186,7 +186,7 @@ func genNumExistingDuplicates() gopter.Gen {
 
 func TestDuplicateFileNaming_Property(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

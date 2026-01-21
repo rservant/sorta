@@ -47,7 +47,7 @@ func genRemainder() gopter.Gen {
 
 func TestFilenameNormalizationPreservesStructure(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

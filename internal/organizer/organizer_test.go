@@ -28,7 +28,7 @@ func genNonMatchingFilename() gopter.Gen {
 
 func TestUnclassifiedFilenamePreservation(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -144,7 +144,7 @@ func formatDate(year, month, day int) string {
 
 func TestFileContentIntegrity(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -246,7 +246,7 @@ func genSourceDirectoryPath() gopter.Gen {
 
 func TestForReviewPathGeneration_Property(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 

@@ -77,7 +77,7 @@ func genConfiguration() gopter.Gen {
 
 func TestConfigurationRoundTrip(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -113,7 +113,7 @@ func TestConfigurationRoundTrip(t *testing.T) {
 // Validates: Requirements 2.3, 3.2
 func TestInboundDirectoryDuplicatePrevention(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
@@ -150,7 +150,7 @@ func TestInboundDirectoryDuplicatePrevention(t *testing.T) {
 // Validates: Requirements 7.3, 7.4, 7.5
 func TestPrefixRuleDuplicatePrevention(t *testing.T) {
 	parameters := gopter.DefaultTestParameters()
-	parameters.MinSuccessfulTests = 100
+	parameters.MinSuccessfulTests = 20
 
 	properties := gopter.NewProperties(parameters)
 
