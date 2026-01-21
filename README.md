@@ -128,6 +128,15 @@ Creates the config file if it doesn't exist.
 
 ```bash
 ./sorta discover /path/to/organized/files
+
+# Limit scan depth (0 = immediate directory only, 1 = one level deep, etc.)
+./sorta discover --depth 2 /path/to/organized/files
+
+# Interactively approve or reject each discovered rule
+./sorta discover --interactive /path/to/organized/files
+
+# Combine depth limiting with interactive mode
+./sorta discover --depth 2 --interactive /path/to/organized/files
 ```
 
 Scans a directory to automatically detect prefix rules from existing file organization. For example, if you have:
@@ -142,10 +151,15 @@ Scans a directory to automatically detect prefix rules from existing file organi
 
 Running `./sorta discover /Documents` will detect and add rules for "Invoice" and "Receipt" prefixes.
 
+**Discovery Options:**
+- `--depth N`: Limit how deep to scan (default: unlimited). Use `--depth 0` for immediate directory only, `--depth 1` for one level of subdirectories, etc.
+- `--interactive`: Prompt for each discovered rule with options to accept, reject, accept all, reject all, or quit
+
 **Discovery Behavior:**
 - Prefixes are extracted only from filenames, not directory names
 - Subdirectories starting with ISO dates (e.g., `2024-01-15 Backup/`) are skipped during scanning
 - This prevents false positives from date-organized folder structures
+- In non-interactive terminals, `--interactive` falls back to auto-add with a warning
 
 ### Audit Trail Commands
 

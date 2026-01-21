@@ -19,22 +19,25 @@ const defaultConfigPath = "sorta-config.json"
 
 // ParseResult holds the result of parsing command line arguments.
 type ParseResult struct {
-	Command    string
-	CmdArgs    []string
-	ConfigPath string
-	Verbose    bool
-	Validate   bool // For config --validate
-	Depth      int  // For run --depth N (-1 means not set)
-	DryRun     bool // For run --dry-run
+	Command       string
+	CmdArgs       []string
+	ConfigPath    string
+	Verbose       bool
+	Validate      bool // For config --validate
+	Depth         int  // For run --depth N (-1 means not set)
+	DryRun        bool // For run --dry-run
+	DiscoverDepth int  // For discover --depth N (-1 means unlimited)
+	Interactive   bool // For discover --interactive
 }
 
 // parseArgs parses command line arguments and extracts the command, command arguments, config path, and verbose flag.
 // It handles -c/--config flag for specifying a custom config file path and -v/--verbose for verbose mode.
 func parseArgs(args []string) (ParseResult, error) {
 	result := ParseResult{
-		ConfigPath: defaultConfigPath,
-		CmdArgs:    []string{},
-		Depth:      -1, // -1 means not set
+		ConfigPath:    defaultConfigPath,
+		CmdArgs:       []string{},
+		Depth:         -1, // -1 means not set
+		DiscoverDepth: -1, // -1 means unlimited depth
 	}
 
 	if len(args) == 0 {
@@ -103,7 +106,7 @@ func parseArgs(args []string) (ParseResult, error) {
 			continue
 		}
 
-		// --depth flag for run command
+		// --depth flag for run and discover commands
 		if arg == "--depth" {
 			if i+1 >= len(args) {
 				return ParseResult{}, errors.New("missing value for depth flag")
@@ -112,7 +115,12 @@ func parseArgs(args []string) (ParseResult, error) {
 			if err != nil {
 				return ParseResult{}, err
 			}
-			result.Depth = depth
+			// Store in appropriate field based on command
+			if result.Command == "discover" {
+				result.DiscoverDepth = depth
+			} else {
+				result.Depth = depth
+			}
 			i += 2
 			continue
 		}
@@ -122,7 +130,12 @@ func parseArgs(args []string) (ParseResult, error) {
 			if err != nil {
 				return ParseResult{}, err
 			}
-			result.Depth = depth
+			// Store in appropriate field based on command
+			if result.Command == "discover" {
+				result.DiscoverDepth = depth
+			} else {
+				result.Depth = depth
+			}
 			i++
 			continue
 		}
@@ -131,6 +144,14 @@ func parseArgs(args []string) (ParseResult, error) {
 		// Requirements: 1.1 - Dry run mode flag
 		if arg == "--dry-run" {
 			result.DryRun = true
+			i++
+			continue
+		}
+
+		// --interactive flag for discover command
+		// Requirements: 2.1 - Interactive discovery mode
+		if arg == "--interactive" {
+			result.Interactive = true
 			i++
 			continue
 		}
@@ -202,7 +223,7 @@ func main() {
 	case "add-inbound":
 		exitCode = runAddInboundCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
 	case "discover":
-		exitCode = runDiscoverCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose)
+		exitCode = runDiscoverCommand(parsed.ConfigPath, parsed.CmdArgs, parsed.Verbose, parsed.DiscoverDepth, parsed.Interactive)
 	case "run":
 		exitCode = runRunCommand(parsed.ConfigPath, parsed.Verbose, parsed.Depth, parsed.DryRun)
 	case "status":
@@ -384,8 +405,8 @@ func runAddInboundCommand(configPath string, args []string, verbose bool) int {
 }
 
 // runDiscoverCommand scans a directory for prefix patterns and updates the configuration.
-// Requirements: 3.1, 3.2, 3.3, 5.2 - verbose output and progress indicators
-func runDiscoverCommand(configPath string, args []string, verbose bool) int {
+// Requirements: 1.1, 2.1, 2.7, 3.1, 3.2, 3.3, 5.2 - verbose output, progress indicators, depth limiting, interactive mode
+func runDiscoverCommand(configPath string, args []string, verbose bool, depth int, interactive bool) int {
 	// Create output instance with verbose config
 	outConfig := output.DefaultConfig()
 	outConfig.Verbose = verbose
@@ -404,6 +425,14 @@ func runDiscoverCommand(configPath string, args []string, verbose bool) int {
 	if err != nil {
 		out.Error("Error: %v", err)
 		return 1
+	}
+
+	// Check terminal interactivity if --interactive flag was requested
+	// Requirements: 2.7 - Fall back to non-interactive mode with warning if terminal is not interactive
+	actualInteractive := interactive
+	if interactive && !discovery.IsInteractive() {
+		out.Info("Warning: Terminal is not interactive, falling back to non-interactive mode")
+		actualInteractive = false
 	}
 
 	// Track progress for non-verbose mode
@@ -438,8 +467,15 @@ func runDiscoverCommand(configPath string, args []string, verbose bool) int {
 		}
 	}
 
-	// Run discovery with callback
-	result, err := discovery.DiscoverWithCallback(scanDir, cfg, discoveryCallback)
+	// Create discovery options with depth limiting
+	// Requirements: 1.1 - depth limiting for discover command
+	opts := discovery.DiscoverOptions{
+		MaxDepth:    depth, // -1 for unlimited (default), N for N levels deep
+		Interactive: actualInteractive,
+	}
+
+	// Run discovery with options
+	result, err := discovery.DiscoverWithOptions(scanDir, cfg, opts, discoveryCallback)
 
 	// End progress indicator before showing results
 	out.EndProgress()
@@ -452,7 +488,14 @@ func runDiscoverCommand(configPath string, args []string, verbose bool) int {
 	// Display results
 	displayDiscoveryResult(result)
 
-	// Add new rules to configuration
+	// Handle interactive mode
+	// Requirements: 2.1 - Prompt for each discovered rule in interactive mode
+	if actualInteractive && len(result.NewRules) > 0 {
+		return runInteractiveDiscovery(cfg, result, configPath, out)
+	}
+
+	// Non-interactive mode: add all new rules to configuration
+	// Requirements: 2.6 - Add all discovered rules automatically when not in interactive mode
 	for _, rule := range result.NewRules {
 		cfg.AddPrefixRule(config.PrefixRule{
 			Prefix:            rule.Prefix,
@@ -467,6 +510,82 @@ func runDiscoverCommand(configPath string, args []string, verbose bool) int {
 			return 1
 		}
 		out.Info("Configuration saved to: %s", configPath)
+	}
+
+	return 0
+}
+
+// runInteractiveDiscovery handles the interactive prompting for each discovered rule.
+// Requirements: 2.1, 2.2, 2.3, 2.4, 2.5 - Interactive discovery mode
+func runInteractiveDiscovery(cfg *config.Configuration, result *discovery.DiscoveryResult, configPath string, out *output.Output) int {
+	prompter := discovery.NewInteractivePrompter(os.Stdin, os.Stdout)
+
+	acceptedRules := []discovery.DiscoveredRule{}
+	acceptAll := false
+	rejectAll := false
+
+	for _, rule := range result.NewRules {
+		// Handle accept-all or reject-all states
+		if acceptAll {
+			acceptedRules = append(acceptedRules, rule)
+			continue
+		}
+		if rejectAll {
+			continue
+		}
+
+		// Prompt for this rule
+		// Requirements: 2.1, 2.2 - Display prefix and target directory, prompt for each rule
+		promptResult, err := prompter.PromptForRule(rule)
+		if err != nil {
+			out.Error("Error during interactive prompt: %v", err)
+			// Save any accepted rules before exiting
+			break
+		}
+
+		switch promptResult {
+		case discovery.PromptAccept:
+			// Requirements: 2.3 - Accept adds rule to configuration
+			acceptedRules = append(acceptedRules, rule)
+		case discovery.PromptReject:
+			// Requirements: 2.4 - Reject skips rule
+			continue
+		case discovery.PromptAcceptAll:
+			// Requirements: 2.5 - Accept all remaining rules
+			acceptedRules = append(acceptedRules, rule)
+			acceptAll = true
+		case discovery.PromptRejectAll:
+			// Requirements: 2.5 - Reject all remaining rules
+			rejectAll = true
+		case discovery.PromptQuit:
+			// Requirements: 2.5 - Quit without processing remaining rules
+			// Save any accepted rules before quitting
+			// Note: break here only exits the switch, the check below exits the loop
+		}
+
+		// Check if we should break out of the loop (quit was selected)
+		if promptResult == discovery.PromptQuit {
+			break
+		}
+	}
+
+	// Add accepted rules to configuration
+	for _, rule := range acceptedRules {
+		cfg.AddPrefixRule(config.PrefixRule{
+			Prefix:            rule.Prefix,
+			OutboundDirectory: rule.TargetDirectory,
+		})
+	}
+
+	// Save the updated configuration if there are accepted rules
+	if len(acceptedRules) > 0 {
+		if err := config.Save(cfg, configPath); err != nil {
+			out.Error("Error saving configuration: %v", err)
+			return 1
+		}
+		out.Info("\nAccepted %d rule(s). Configuration saved to: %s", len(acceptedRules), configPath)
+	} else {
+		out.Info("\nNo rules accepted. Configuration unchanged.")
 	}
 
 	return 0
@@ -1292,6 +1411,10 @@ Flags:
 Config Options:
   --validate            Validate configuration and report errors
 
+Discover Options:
+  --depth N             Limit scan depth (0 = immediate directory only, default: unlimited)
+  --interactive         Prompt to accept or reject each discovered rule
+
 Run Options:
   --depth N             Override scan depth (0 = immediate directory only)
   --dry-run             Preview what files would be moved without making changes
@@ -1310,6 +1433,9 @@ Examples:
   sorta config --validate               Validate configuration
   sorta add-inbound /path/to/inbound    Add an inbound directory
   sorta discover /path/to/organized     Discover prefix rules from existing files
+  sorta discover --depth 2 /path        Discover with depth limit of 2 levels
+  sorta discover --interactive /path    Discover with interactive prompts for each rule
+  sorta discover --depth 2 --interactive /path  Combine depth limit with interactive mode
   sorta run                             Organize files according to configuration
   sorta run --depth 2                   Run with scan depth of 2 levels
   sorta run --dry-run                   Preview what files would be moved
